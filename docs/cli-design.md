@@ -134,10 +134,19 @@ stderr.
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
-# stdout: {"polled":3,"new_items":2,"items":[...]}
-# err.json: {"errors":[{"feed_url":"...","category":"http","status":404}]}
+# stdout: {"polled":3,"succeeded":2,"failed":1,"new_items":2,"items":[...],
+#          "failures":[{"feed_url":"...","category":"http","status":404}],
+#          "renamed":[]}
+# err.json: {"errors":[{"feed_url":"...","category":"http","status":404,
+#                       "message":"404 Not Found"}]}
 # exit=3
 ```
+
+The stdout envelope enumerates which feeds failed (URL, category, and HTTP
+status where applicable) so an agent can triage a partial failure from the
+result stream alone; stderr still carries the full per-feed detail, including
+the human-readable message. The two streams are redundant by design, not
+substitutes.
 
 ### Discoverability
 
@@ -233,9 +242,15 @@ the exit code is derived:
 
 Per-feed failures during a poll are recorded into the result and persisted as
 feed failure state (count, last error, time), and the same failures are emitted
-to stderr as structured `*FeedError` objects. The stdout envelope reports
-outcome counts but does not enumerate which feeds failed: the exit code reports
-whether, and stderr reports which and why.
+to stderr as structured `*FeedError` objects. The stdout envelope also reports
+the outcome on the result stream: a `succeeded` count, a `failed` count, and a
+`failures` list whose entries carry the feed URL, the error category, and, where
+applicable, the HTTP status (the `status` field is omitted for network, parse,
+and timeout failures that have no status). The attempted-feed count `polled`
+satisfies the invariant `polled == succeeded + failed`, and `failures` is always
+present as a list, empty when no feed failed. The exit code still reports
+whether anything failed; the envelope reports which feeds and their category;
+stderr adds the human-readable message and full diagnostic detail.
 
 Logging uses the standard library `log/slog`. The default handler writes JSON
 log lines to stderr; under `--format text` a text handler writes friendly lines
@@ -303,7 +318,7 @@ predictable.
 | `discover <url>`   | Read-only: list candidate feeds autodiscovered or probed from a URL.                                                                                    |
 | `enable <feed>`    | Re-enable an auto-disabled feed.                                                                                                                        |
 | `disable <feed>`   | Manually disable a feed (skipped by poll).                                                                                                              |
-| `import <file\|->` | Import subscriptions from an OPML outline.                                                                                                              |
+| `import <file\|->` | Import subscriptions from an OPML outline; validates each feed by default (`--no-validate` to skip).                                                     |
 | `export [-o file]` | Export subscriptions as OPML 2.0.                                                                                                                       |
 | `migrate`          | Apply or inspect schema migrations (`--status`).                                                                                                        |
 | `schema [command]` | Emit the machine-readable interface contract.                                                                                                           |
@@ -360,12 +375,21 @@ feedwatch add https://example.com/feed.xml
   validator that actually changed is written back, an empty value never
   overwrites a stored one, and the write is skipped when there is nothing to
   update.
+- Rename visibility: when a poll follows a permanent redirect (HTTP `301` or
+  `308`) and renames a feed to its canonical URL, it reports the change in the
+  envelope's `renamed` list as a `{from, to}` pair and emits a corresponding
+  informational log line on stderr, so the agent learns the new identity at
+  rename time instead of discovering it through a later query that silently
+  returns nothing. `renamed` is always present as a list, empty when no feed was
+  renamed.
 
 ```sh
 feedwatch poll          # only due feeds, marks new items seen
-# {"polled":2,"skipped":1,"items":[...]}
+# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"new_items":7,
+#  "items":[...],"failures":[],"renamed":[]}
 feedwatch poll          # immediately again
-# {"polled":0,"skipped":3,"items":[]}
+# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"new_items":0,
+#  "items":[],"failures":[],"renamed":[]}
 ```
 
 ## Fetching and HTTP
@@ -380,7 +404,10 @@ server-side request forgery. A URL the caller supplies directly may resolve to a
 private, loopback, or link-local address, since watching a self-hosted reader on
 the LAN is legitimate, but a public URL is never allowed to redirect into
 private address space; the resolved address is re-checked after every redirect
-hop. `--allow-private` lifts the redirect restriction. Permanent redirects (301, 308) update the stored feed URL, and that rewrite is subject to the same check.
+hop. `--allow-private` lifts the redirect restriction. Permanent redirects (301,
+308) update the stored feed URL, cascading the rename to that feed's stored
+items, and that rewrite is subject to the same check; each such rename is
+surfaced on the poll result stream and on stderr (see Poll Semantics).
 
 An outbound proxy (`--proxy`, or the standard proxy environment variables), a
 custom CA bundle (`--ca-bundle`), and a minimum TLS version (`--min-tls`) are
@@ -425,9 +452,23 @@ plaintext-versus-markup decided after the fact.
 All dates are normalized on write to fixed-width RFC3339 UTC regardless of the
 source format (RFC 822 for RSS, RFC 3339 for Atom). Writing one uniform zone and
 width is what makes the lexicographic string comparison behind `--since`,
-`--until`, and `--order` correct. A date that cannot be parsed is stored as null
-and never fabricated; for ordering and date filters a null `published_at`
-coalesces to the time the item was fetched.
+`--until`, and `--order` correct.
+
+Each item carries two distinct times. Its publication time `published_at` is the
+date the feed declares. A feed legitimately omitting a publication date is valid,
+not an error: when an item carries no parseable publication date its
+`published_at` is stored as null and never fabricated. Its fetch time
+`fetched_at` is the moment feedwatch first recorded the item; feedwatch always
+sets it, so it is never null. These are independent: `published_at` answers "when
+did the publisher say this was published," `fetched_at` answers "when did this
+first arrive here," and the latter is the reliable freshness signal precisely
+because it cannot be null or mis-formatted by a publisher.
+
+feedwatch does not substitute the fetch time for a null publication time. On the
+publication axis a null `published_at` is excluded from `--since`/`--until` date
+filters and ordered last under descending order, first under ascending; on the
+fetch axis every item is matched and ordered by its always-present `fetched_at`.
+See Querying History for how the axis is selected.
 
 Normalized fields follow an explicit precedence: `content_html` is taken from
 `content:encoded` or Atom `content`, falling back to the description when that
@@ -450,7 +491,8 @@ cascades from the item author to the feed `managingEditor` to Dublin Core
   "categories": ["go"],
   "enclosures": [{ "url": "...", "type": "audio/mpeg", "length": 5768960 }],
   "published_at": "2026-06-27T10:00:00Z",
-  "updated_at": "2026-06-27T10:00:00Z"
+  "updated_at": "2026-06-27T10:00:00Z",
+  "fetched_at": "2026-06-27T10:05:00Z"
 }
 ```
 
@@ -464,19 +506,37 @@ set:
 
 - `--feed <url|alias>` (repeatable)
 - `--since` and `--until` (RFC3339, or relative such as `24h` or `7d`)
+- `--time-field published|fetched` (which time the `--since`/`--until` window
+  filters on, default `published`)
 - `--limit` and `--offset`
 - `--order published|fetched asc|desc`
 - `--contains <text>` (substring match over title and content)
 - `--fields <list>` (project to a subset of item fields)
 
-By default `items` returns the full normalized item; `--fields` narrows the
-projection to keep large triage queries cheap (for example, titles and links
-without the stored bodies).
+The filter axis and the order axis are independent: `--time-field` chooses which
+time the date window matches, while `--order` chooses which time the results are
+sorted by, so an agent can, for example, window on fetch time but sort by
+publication time. On the publication axis a `--since`/`--until` window excludes
+items whose `published_at` is null; the count of items dropped for that reason
+is reported in the result envelope as `omitted_no_date` and noted in an
+informational log line on stderr, so a dateless item never silently masquerades
+as recently published. The fetch axis is unaffected, since `fetched_at` is never
+null. This honest exclusion is reflected in the machine-readable `schema` and
+the usage documentation so the documented contract matches the behavior.
+
+By default `items` returns the full normalized item, including `fetched_at`
+alongside `published_at`; `--fields` narrows the projection to keep large triage
+queries cheap (for example, titles and links without the stored bodies). Naming
+the always-present identity field `feed_url` in a projection is accepted as a
+no-op rather than an error. An unrecognized field name is a usage error that
+returns no partial results; when the name closely resembles a valid field, the
+error includes a did-you-mean suggestion.
 
 ```sh
 feedwatch items --feed godev --since 7d --limit 50
 feedwatch items --contains "release" --order published desc
-feedwatch items --feed godev --fields title,link,published_at
+feedwatch items --since 7d --time-field fetched --order fetched desc
+feedwatch items --feed godev --fields title,link,published_at,fetched_at
 ```
 
 ## Parsing and Robustness
@@ -542,13 +602,23 @@ of other readers.
   attribute), uses `text` or `title` as the alias when one is free, skips and
   reports duplicates, and never fails the whole import because of one bad entry.
   It reports per-entry results as JSON.
+- By default `import` validates each entry the way `add` does, fetching and
+  parsing the feed before subscribing, so a reported `added` count means the
+  feeds are actually usable rather than merely recorded. Validation runs
+  concurrently under the configured concurrency limit and applies the same
+  transient-failure retry policy as other fetches. A feed that fails validation
+  is not subscribed and is recorded among the per-entry `failed` results with a
+  reason; one failing entry never aborts the import. `--no-validate` restores
+  the fast bulk-add behavior, subscribing every syntactically valid feed without
+  fetching it, in which case a successful import does not imply reachability.
 - `export` writes the current subscriptions and their aliases as valid OPML 2.0,
   to a file or stdout. If per-feed tags are ever added, they round-trip through
   the OPML `category` attribute.
 
 ```sh
 feedwatch import subs.opml
-# {"added":42,"skipped":3,"failed":[{"xmlUrl":"...","reason":"..."}]}
+# {"added":42,"skipped":3,"failed":[{"xmlUrl":"...","reason":"404 Not Found"}]}
+feedwatch import --no-validate subs.opml   # fast bulk-add, no reachability check
 feedwatch export -o backup.opml
 feedwatch export | curl ...
 ```
@@ -582,16 +652,16 @@ cron, or a systemd timer.
 | CLI framework        | urfave/cli v3; native flag/env precedence, ExitCoder mapping  |
 | Feed identity        | URL canonical, optional alias                                 |
 | Discovery            | Explicit `add`; read-only `discover` (autodiscover + probe)   |
-| Poll                 | Due-only, auto-consume, conditional GET                       |
+| Poll                 | Due-only, auto-consume, conditional GET; reports failures and renames in envelope |
 | Deduplication        | `(feed_url, guid)` with link then title fallback, upsert      |
 | HTTP fetch           | Connect and overall timeouts, SSRF guard, proxy/CA/TLS knobs  |
 | Concurrency          | Bounded parallel (`errgroup`), per-host politeness            |
 | Interrupts           | SIGINT/SIGTERM cancel, persist partial, exit 130/143          |
 | Package layout       | Small acyclic packages under `src/`; interface + clock seams  |
 | Item state           | Single internal `seen` layer                                  |
-| Content              | Raw HTML plus plaintext and base URL, dates RFC3339 UTC       |
+| Content              | Raw HTML plus plaintext and base URL, dates RFC3339 UTC; null `published_at` honest, `fetched_at` never null |
 | Parser               | gofeed behind a `Parser` interface                            |
 | Failure handling     | In-call retry, then track, back off, auto-disable, `enable`   |
 | Retention            | Optional `prune` by age or count, off by default              |
-| OPML                 | Import and export with per-entry reporting                    |
+| OPML                 | Import (validated by default) and export, per-entry reporting |
 | Content intelligence | None; pure deterministic plumbing                             |
