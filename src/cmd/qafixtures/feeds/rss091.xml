@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="0.91">
+  <channel>
+    <title>QA RSS 0.91 Feed</title>
+    <link>http://example.com/</link>
+    <description>Minimal RSS 0.9x feed.</description>
+    <language>en-us</language>
+    <item>
+      <title>Legacy item one</title>
+      <link>http://example.com/legacy/1</link>
+      <description>Legacy body one.</description>
+    </item>
+  </channel>
+</rss>

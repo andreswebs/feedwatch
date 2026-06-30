@@ -1,0 +1,53 @@
+---
+id: fee-bsge
+status: open
+deps: [fee-63n9, fee-chr5]
+links: []
+created: 2026-06-29T19:33:04Z
+type: task
+priority: 3
+assignee: Andre Silva
+parent: fee-gyos
+tags: [store]
+---
+
+# PostgreSQL store backend (deferred)
+
+Implement a PostgreSQL backend for the Store interface (pgx, no CGO), selected by a postgres:// DSN, passing the same Store contract tests as SQLite (tombstone, dedup upsert, due feeds, queries) with portable migrations. Deferred P3; behind the interface. Refs: docs/cli-design.md (State and Storage, Schema Lifecycle).
+
+## Design
+
+A PostgreSQL backend for the `Store` interface, selected when `FEEDWATCH_DB` is a
+`postgres://` DSN. Deferred (P3): not required for the first milestone; build
+behind the interface and implement later.
+
+```go
+// src/internal/store/postgres
+func Open(dsn string, opts ...Option) (*Store, error) // implements store.Store
+// driver: github.com/jackc/pgx/v5/stdlib (database/sql), no CGO.
+```
+
+- Same logical schema as SQLite; migration SQL kept portable, with dialect
+  differences (e.g. `ON CONFLICT`, timestamp types) handled behind the interface.
+- The DSN scheme in `FEEDWATCH_DB` selects this backend over SQLite.
+- Times stored as `timestamptz` (UTC); JSON columns as `jsonb`.
+- The tombstone/prune, dedup upsert, and due-feed semantics match the SQLite
+  store so the `Store` contract tests run against both backends.
+
+TDD plan (against a Postgres test instance, e.g. via a CI service container or
+`dockertest`; skipped when unavailable):
+
+1. (tracer) the shared `Store` contract test-suite passes against Postgres
+   (the same behaviors 1-9 the SQLite store satisfies).
+2. DSN-scheme selection routes `postgres://` to this backend.
+
+Deep-module note: a second implementation of the existing `Store` interface; no
+caller changes. Run the same interface-level contract tests against both stores.
+
+## Acceptance Criteria
+
+- A `postgres://`-selected `Store` implementation (pgx, no CGO) passing the same
+  `Store` contract tests as SQLite (tombstone, dedup upsert, due feeds, queries).
+- Portable migrations with dialect differences behind the interface.
+- Deferred P3; not required for milestone 1.
+- Supports Req 6 (optional Postgres backend). `make validate` passes.

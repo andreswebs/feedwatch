@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Valid RSS Feed</title>
+    <link>https://rss.example/</link>
+    <description>A well-formed RSS 2.0 feed</description>
+    <ttl>60</ttl>
+    <item>
+      <title>RSS item one</title>
+      <link>https://rss.example/one</link>
+      <description>The first RSS item.</description>
+      <guid isPermaLink="false">tag:rss.example,2026:one</guid>
+      <pubDate>Sat, 27 Jun 2026 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>RSS item two</title>
+      <link>https://rss.example/two</link>
+      <description>The second RSS item.</description>
+      <guid isPermaLink="true">https://rss.example/two</guid>
+      <pubDate>Sun, 28 Jun 2026 12:30:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

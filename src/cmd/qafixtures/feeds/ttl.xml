@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>QA TTL Feed</title>
+    <link>http://example.com/</link>
+    <description>Declares a 60-minute TTL for due-calculation testing.</description>
+    <ttl>60</ttl>
+    <item>
+      <title>TTL item one</title>
+      <link>http://example.com/ttl/1</link>
+      <guid isPermaLink="false">urn:qa:ttl:1</guid>
+      <pubDate>Mon, 27 Jun 2026 10:00:00 GMT</pubDate>
+      <description>Body one.</description>
+    </item>
+  </channel>
+</rss>

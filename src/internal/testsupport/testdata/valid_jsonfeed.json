@@ -1,0 +1,22 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Valid JSON Feed",
+  "home_page_url": "https://json.example/",
+  "feed_url": "https://json.example/feed.json",
+  "items": [
+    {
+      "id": "https://json.example/one",
+      "url": "https://json.example/one",
+      "title": "JSON item one",
+      "content_html": "<p>The first JSON item.</p>",
+      "date_published": "2026-06-27T10:00:00Z"
+    },
+    {
+      "id": "https://json.example/two",
+      "url": "https://json.example/two",
+      "title": "JSON item two",
+      "content_text": "The second JSON item.",
+      "date_published": "2026-06-28T12:30:00Z"
+    }
+  ]
+}

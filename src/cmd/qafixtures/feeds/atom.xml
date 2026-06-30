@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>QA Atom 1.0 Feed</title>
+  <link rel="alternate" href="http://example.com/"/>
+  <link rel="self" href="http://127.0.0.1:8099/feeds/atom.xml"/>
+  <id>urn:qa:atom:feed</id>
+  <updated>2026-06-27T12:00:00Z</updated>
+  <author><name>Atom Author</name></author>
+  <entry>
+    <title>Atom entry one</title>
+    <link rel="alternate" href="http://example.com/atom/1"/>
+    <id>urn:qa:atom:1</id>
+    <updated>2026-06-27T10:00:00Z</updated>
+    <published>2026-06-27T10:00:00Z</published>
+    <content type="html">&lt;p&gt;Atom &lt;strong&gt;one&lt;/strong&gt; content.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Atom entry two</title>
+    <link rel="alternate" href="http://example.com/atom/2"/>
+    <id>urn:qa:atom:2</id>
+    <updated>2026-06-27T11:00:00Z</updated>
+    <published>2026-06-27T11:00:00Z</published>
+    <content type="html">&lt;p&gt;Atom two content.&lt;/p&gt;</content>
+  </entry>
+</feed>

@@ -1,0 +1,14 @@
+
+<rss version="2.0">
+  <channel>
+    <title>Sloppy Feed & Friends</title>
+    <link>https://sloppy.example/</link>
+    <description>Raw ampersands & unescaped entities that strict XML rejects</description>
+    <item>
+      <title>Recoverable post</title>
+      <link>https://sloppy.example/recoverable?a=1&b=2</link>
+      <description>Tom & Jerry discuss feeds & ampersands.</description>
+      <guid>https://sloppy.example/recoverable</guid>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,1 @@
+{"errors":[{"category":"http","feed_url":"http://feedserver/bad.xml","status":404,"message":"server returned HTTP 404"}]}

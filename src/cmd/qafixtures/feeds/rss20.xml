@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>QA RSS 2.0 Feed</title>
+    <link>http://127.0.0.1:8099/feeds/rss20.xml</link>
+    <description>Three items with stable GUIDs for dedup testing.</description>
+    <managingEditor>editor@example.com (Feed Editor)</managingEditor>
+    <item>
+      <title>First post</title>
+      <link>http://example.com/posts/1</link>
+      <guid isPermaLink="false">urn:qa:rss20:1</guid>
+      <pubDate>Mon, 27 Jun 2026 10:00:00 GMT</pubDate>
+      <description><![CDATA[<p>Body of the <a href="/x">first</a> post &amp; more.</p>]]></description>
+    </item>
+    <item>
+      <title>Second post</title>
+      <link>http://example.com/posts/2</link>
+      <guid isPermaLink="false">urn:qa:rss20:2</guid>
+      <pubDate>Mon, 27 Jun 2026 11:00:00 GMT</pubDate>
+      <description>Plain second body.</description>
+    </item>
+    <item>
+      <title>Third post</title>
+      <link>http://example.com/posts/3</link>
+      <guid isPermaLink="false">urn:qa:rss20:3</guid>
+      <pubDate>Mon, 27 Jun 2026 12:00:00 GMT</pubDate>
+      <description>Plain third body.</description>
+    </item>
+  </channel>
+</rss>

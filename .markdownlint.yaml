@@ -1,0 +1,3 @@
+---
+MD013: false # line-length
+MD060: false # table pipe alignment

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example RSS Blog</title>
+    <link>https://blog.example/</link>
+    <description>An example feed</description>
+    <ttl>45</ttl>
+    <managingEditor>editor@example.com (The Editor)</managingEditor>
+    <item>
+      <title>First post</title>
+      <link>https://blog.example/first</link>
+      <description>A short summary of the first post.</description>
+      <guid isPermaLink="false">tag:blog.example,2026:first</guid>
+      <author>alice@example.com (Alice)</author>
+      <category>go</category>
+      <category>feeds</category>
+      <pubDate>Sat, 27 Jun 2026 10:00:00 +0000</pubDate>
+      <enclosure url="https://blog.example/first.mp3" length="5768960" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Second post</title>
+      <link>https://blog.example/second</link>
+      <description>The second one.</description>
+      <guid isPermaLink="true">https://blog.example/second</guid>
+      <pubDate>Sun, 28 Jun 2026 12:30:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>

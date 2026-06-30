@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>QA Malformed Feed</title>
+    <link>http://example.com/</link>
+    <description>Contains a raw unescaped ampersand & inside text, which breaks strict XML but a lenient parser still recovers.</description>
+    <item>
+      <title>Tom & Jerry</title>
+      <link>http://example.com/malformed/1</link>
+      <guid isPermaLink="false">urn:qa:malformed:1</guid>
+      <description>Body with a bare & ampersand.</description>
+    </item>
+  </channel>
+</rss>

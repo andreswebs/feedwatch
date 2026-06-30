@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>QA Subscriptions</title>
+  </head>
+  <body>
+    <outline text="Tech">
+      <outline
+        text="QA RSS 2.0 Feed"
+        title="QA RSS 2.0 Feed"
+        type="rss"
+        xmlUrl="http://127.0.0.1:8099/feeds/rss20.xml"
+        htmlUrl="http://example.com/"
+      />
+      <outline text="Languages">
+        <outline
+          text="QA Atom Feed"
+          title="QA Atom Feed"
+          type="rss"
+          xmlUrl="http://127.0.0.1:8099/feeds/atom.xml"
+        />
+      </outline>
+    </outline>
+    <outline
+      text="No xmlUrl fallback"
+      type="rss"
+      url="http://127.0.0.1:8099/feeds/jsonfeed.json"
+    />
+  </body>
+</opml>

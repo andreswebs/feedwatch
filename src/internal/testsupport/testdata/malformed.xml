@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Malformed but recoverable</title>
+    <link>https://malformed.example/</link>
+    <description>Contains a raw &ampersand that breaks strict XML</description>
+    <item>
+      <title>Tom &amp; Jerry, raw & ampersand</title>
+      <link>https://malformed.example/one</link>
+      <description>Body with an unescaped & character that strict XML rejects.</description>
+      <guid>https://malformed.example/one</guid>
+    </item>
+  </channel>
+</rss>

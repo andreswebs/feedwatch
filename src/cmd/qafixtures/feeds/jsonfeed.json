@@ -1,0 +1,23 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "QA JSON Feed",
+  "home_page_url": "http://example.com/",
+  "feed_url": "http://127.0.0.1:8099/feeds/jsonfeed.json",
+  "authors": [{ "name": "JSON Author" }],
+  "items": [
+    {
+      "id": "urn:qa:json:1",
+      "url": "http://example.com/json/1",
+      "title": "JSON item one",
+      "content_html": "<p>JSON <em>one</em>.</p>",
+      "date_published": "2026-06-27T10:00:00Z"
+    },
+    {
+      "id": "urn:qa:json:2",
+      "url": "http://example.com/json/2",
+      "title": "JSON item two",
+      "content_text": "JSON two plain.",
+      "date_published": "2026-06-27T11:00:00Z"
+    }
+  ]
+}

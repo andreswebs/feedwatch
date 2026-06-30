@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<rss version="2.0">
+  <channel>
+    <title>Feed café Latince</title>
+    <link>https://iso.example/</link>
+    <description>Encoded en ISO-8859-1, accent dans le café</description>
+    <item>
+      <title>Élément un, déjà vu</title>
+      <link>https://iso.example/one</link>
+      <description>Le café est prêt à être consommé.</description>
+      <guid>https://iso.example/one</guid>
+    </item>
+  </channel>
+</rss>

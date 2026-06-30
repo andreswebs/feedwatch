@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<rss version="2.0">
+  <channel>
+    <title>QA Latin-1 Feed</title>
+    <link>http://example.com/</link>
+    <description>Accented text: café, résumé, naïve.</description>
+    <item>
+      <title>Café item</title>
+      <link>http://example.com/latin1/1</link>
+      <guid isPermaLink="false">urn:qa:latin1:1</guid>
+      <description>Déjà vu en français.</description>
+    </item>
+  </channel>
+</rss>
