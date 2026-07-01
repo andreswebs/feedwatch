@@ -291,8 +291,11 @@ uniformly regardless of source format.
 - The system shall normalize all item dates to fixed-width RFC3339 UTC on write.
 - IF an item's date cannot be parsed, THEN the system shall store the date as
   null and shall not fabricate a value.
-- WHEN ordering or filtering by date and an item's published date is null, the
-  system shall use the item's fetch time in its place.
+- WHEN ordering or filtering on the publication axis and an item's published date
+  is null, the system shall exclude it from publication-axis `--since`/`--until`
+  windows and order it last under descending and first under ascending order,
+  never substituting the fetch time. (Superseded the baseline coalescing
+  behavior; see 002-beta Req 3.)
 - The system shall select item content from content:encoded or Atom content,
   falling back to the description when that content is empty.
 - The system shall derive the item summary from the feed's description or

@@ -26,6 +26,7 @@ type Result struct {
 	NewItems int
 	Failed   int
 	Items    []core.Item
+	Renamed  []core.FeedRename
 }
 
 // ExitCode derives the process exit code from the outcome summary, never from a
@@ -81,6 +82,7 @@ func Run(ctx context.Context, d Deps, names []string, force bool) (Result, []*co
 		NewItems: totals.newItems,
 		Failed:   totals.failed,
 		Items:    items,
+		Renamed:  totals.renames,
 	}, feedErrs, nil
 }
 

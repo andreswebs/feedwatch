@@ -47,6 +47,7 @@ func TestItemMarshalsDocumentedShape(t *testing.T) {
 		"author":            "Jane",
 		"published_at":      "2026-06-27T10:00:00Z",
 		"updated_at":        "2026-06-27T10:00:00Z",
+		"fetched_at":        "2026-06-27T10:00:00Z",
 	}
 	for k, v := range want {
 		if got, ok := out[k]; !ok || got != v {
@@ -54,7 +55,7 @@ func TestItemMarshalsDocumentedShape(t *testing.T) {
 		}
 	}
 
-	for _, internal := range []string{"DedupKey", "dedup_key", "FetchedAt", "fetched_at", "Seen", "seen"} {
+	for _, internal := range []string{"DedupKey", "dedup_key", "Seen", "seen"} {
 		if _, ok := out[internal]; ok {
 			t.Errorf("internal field %q must not be serialized", internal)
 		}

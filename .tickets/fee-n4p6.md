@@ -1,6 +1,6 @@
 ---
 id: fee-n4p6
-status: open
+status: closed
 deps: [fee-ah78]
 links: []
 created: 2026-06-30T22:54:52Z
@@ -139,3 +139,9 @@ error.
   "Query stored history" (the `feed_url` gotcha).
 - Builds on: `fee-j4w1` (`feed_url` as always-on identity; unknown field exits
   1). Depends on: `fee-ah78` (Req 2) for the shared `--fields` path.
+
+## Notes
+
+**2026-06-30T23:41:37Z**
+
+Implemented Req 5 field-selection ergonomics. (1) --fields feed_url is now a no-op: buildItemQuery skips it before the ValidItemFields check (feed_url stays out of the valid set; ProjectItem/projectedColumns already always emit it, so no store/core change). (2) Unknown field errors gained a did-you-mean suggestion via new cli/suggest.go (Levenshtein, threshold dist<=2 and <len(name); candidates from new core.ItemFieldNames() = sorted ValidItemFields keys + feed_url, deterministic). No-partial-results guarantee preserved (validation before any store query). Added core/query_test.go, cli/suggest_test.go, and cli/items_test.go cases (note: did-you-mean test decodes the JSON error object since stderr JSON-escapes the quotes). Updated docs/usage.md and learnings. make build green. Envelope shape unchanged, so no schema golden regeneration needed.

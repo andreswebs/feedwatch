@@ -30,14 +30,20 @@ type Store interface {
 	// RecordSuccess clears failure state and schedules the next poll. When
 	// finalURL is non-empty and differs from url, the feed is renamed to
 	// finalURL (a permanent-redirect rewrite), cascading to its items, unless
-	// finalURL is already subscribed, in which case the rewrite is skipped.
-	RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) error
+	// finalURL is already subscribed, in which case the rewrite is skipped. It
+	// returns renamedTo, the new canonical URL when a rename was applied, or ""
+	// when the feed URL was unchanged (including a rename declined because the
+	// target was already subscribed), so the caller reports what happened rather
+	// than what was intended.
+	RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) (renamedTo string, err error)
 	// RecordFailure increments failure state and schedules a backed-off retry.
 	RecordFailure(ctx context.Context, url string, cat core.Category, msg string, at, nextDue time.Time) error
 	// UpsertItems inserts items, returning only those not seen before.
 	UpsertItems(ctx context.Context, feedURL string, items []core.Item) (newItems []core.Item, err error)
-	// QueryItems returns stored items matching the query.
-	QueryItems(ctx context.Context, q core.ItemQuery) ([]core.Item, error)
+	// QueryItems returns stored items matching the query, along with the count of
+	// items excluded from a publication-axis date window for having a null
+	// publication time.
+	QueryItems(ctx context.Context, q core.ItemQuery) (core.ItemQueryResult, error)
 	// PruneItems deletes item rows per the policy, preserving dedup state.
 	PruneItems(ctx context.Context, p core.PrunePolicy) (deleted int, err error)
 	// SchemaVersion reports the applied migration version.

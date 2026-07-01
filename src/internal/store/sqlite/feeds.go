@@ -140,18 +140,19 @@ func (s *Store) SetValidators(ctx context.Context, url, etag, lastModified strin
 // RecordSuccess clears failure state and schedules the next poll. When finalURL
 // names a permanent-redirect target distinct from url, the feed is renamed to
 // it and its items cascade, all within one transaction; a target already
-// subscribed is left alone (no merge).
-func (s *Store) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) error {
+// subscribed is left alone (no merge). It returns the new canonical URL when a
+// rename was applied, else "".
+func (s *Store) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) (string, error) {
 	if finalURL == "" || finalURL == url {
 		if err := s.recordSuccessExec(ctx, s.db, url, url, fetchedAt, nextDue); err != nil {
-			return err
+			return "", err
 		}
-		return nil
+		return "", nil
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin record success %q: %w", url, err)
+		return "", fmt.Errorf("begin record success %q: %w", url, err)
 	}
 	committed := false
 	defer func() {
@@ -165,7 +166,7 @@ func (s *Store) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDu
 	// to COMMIT lets both rows be rewritten in either order. The pragma resets
 	// itself at COMMIT and is scoped to this transaction's connection.
 	if _, err := tx.ExecContext(ctx, `PRAGMA defer_foreign_keys = ON`); err != nil {
-		return fmt.Errorf("defer foreign keys: %w", err)
+		return "", fmt.Errorf("defer foreign keys: %w", err)
 	}
 
 	target := finalURL
@@ -175,26 +176,29 @@ func (s *Store) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDu
 	case errors.Is(err, sql.ErrNoRows):
 		// target free: proceed with the rename
 	case err != nil:
-		return fmt.Errorf("check redirect target %q: %w", finalURL, err)
+		return "", fmt.Errorf("check redirect target %q: %w", finalURL, err)
 	default:
 		target = url // already subscribed: keep the original URL
 	}
 
 	if err := s.recordSuccessExec(ctx, tx, url, target, fetchedAt, nextDue); err != nil {
-		return err
+		return "", err
 	}
 	if target != url {
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE items SET feed_url = ? WHERE feed_url = ?`, target, url); err != nil {
-			return fmt.Errorf("rewrite items feed_url %q -> %q: %w", url, target, err)
+			return "", fmt.Errorf("rewrite items feed_url %q -> %q: %w", url, target, err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit record success %q: %w", url, err)
+		return "", fmt.Errorf("commit record success %q: %w", url, err)
 	}
 	committed = true
-	return nil
+	if target != url {
+		return target, nil
+	}
+	return "", nil
 }
 
 // execer is the ExecContext surface shared by *sql.DB and *sql.Tx, letting

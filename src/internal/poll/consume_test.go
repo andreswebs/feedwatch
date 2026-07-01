@@ -83,8 +83,8 @@ func TestConsumeReturnsNewItemsThenDedups(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
-	if len(stored) != 2 {
-		t.Fatalf("stored items = %d, want 2", len(stored))
+	if len(stored.Items) != 2 {
+		t.Fatalf("stored items = %d, want 2", len(stored.Items))
 	}
 
 	// Second poll over the same items: nothing new.
@@ -282,8 +282,8 @@ func TestConsumeRewritesURLOnPermanentRedirect(t *testing.T) {
 			if err != nil {
 				t.Fatalf("QueryItems: %v", err)
 			}
-			if len(items) != tc.wantitems {
-				t.Errorf("items under %q = %d, want %d", tc.wantURL, len(items), tc.wantitems)
+			if len(items.Items) != tc.wantitems {
+				t.Errorf("items under %q = %d, want %d", tc.wantURL, len(items.Items), tc.wantitems)
 			}
 		})
 	}

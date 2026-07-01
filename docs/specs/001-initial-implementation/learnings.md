@@ -55,7 +55,7 @@ implementation, newest last. Keyed loosely by ticket.
   interfaces each live in their own consumer package (`store`, `parse`,
   `fetch`) and import only `core`, so the graph stays acyclic; verify with
   `go list -deps ./internal/store ./internal/parse ./internal/fetch | grep
-  feedwatch`.
+feedwatch`.
 - Interface-only packages whose only test artifact is a compile-time
   `var _ Iface = (*fake)(nil)` conformance check report `[no tests to run]`
   under `go test` (no `TestXxx` funcs), but the conformance still fails the
@@ -142,7 +142,7 @@ implementation, newest last. Keyed loosely by ticket.
   construction point. `commit` comes from `runtime/debug.ReadBuildInfo()`
   `vcs.revision` — **empty under `go run` and `go test`**, but correctly stamped
   in binaries built by `make build`. `go` is `runtime.Version()`.
-- Exit boundary: `cmd.Run` calls the custom `ExitErrHandler` *inside* Run (via
+- Exit boundary: `cmd.Run` calls the custom `ExitErrHandler` _inside_ Run (via
   `handleExitCoder`) and still returns the error, so `main` also calls
   `cli.HandleExitCoder(err)`. In production `OsExiter == os.Exit`, so the handler
   terminates the process and main's second call is unreached; with `err == nil`
@@ -184,7 +184,7 @@ implementation, newest last. Keyed loosely by ticket.
 - Its one open child, fee-c66o (walking skeleton: version + `migrate --status`
   end-to-end), is **intentionally blocked by the lanes the epic gates**
   (`fee-bqne` -> `fee-vlk9` -> `fee-aqkn`). That is not a scheduling bug: the
-  capstone integration is proven *after* the persistence/migrate lanes land, so
+  capstone integration is proven _after_ the persistence/migrate lanes land, so
   the parent epic closes before that child. Closing the epic is what makes the
   six P1 lanes (`fee-bqne`, `fee-b91x`, `fee-e487`, `fee-lzyw`, `fee-zuz2`,
   `fee-lfyq`) ready — they were each blocked solely by `fee-63n9`.
@@ -205,7 +205,7 @@ implementation, newest last. Keyed loosely by ticket.
   `aliasArg("")` returns `nil`; reads scan into `sql.NullString` (NULL -> "").
 - golangci-lint here is strict on three things this ticket hit:
   - **errorlint** rejects `fmt.Errorf("...: %v: %w", err, sentinel)` — a `%v`
-    on an error value is flagged. To wrap a cause *and* a sentinel in one error,
+    on an error value is flagged. To wrap a cause _and_ a sentinel in one error,
     use `errors.Join(err, core.ErrStoreUnavailable)` under a single `%w`.
   - **gosec G202** flags SQL built with `+` concatenation of a non-constant
     (e.g. `"SELECT " + strings.Join(cols, ", ")`). Build dynamic queries with a
@@ -222,7 +222,7 @@ implementation, newest last. Keyed loosely by ticket.
   deduped after a re-poll.
 - **Prune by max-per-feed** uses a window function:
   `ROW_NUMBER() OVER (PARTITION BY feed_url ORDER BY COALESCE(published_at,
-  fetched_at) DESC, dedup_key DESC)` and tombstones rows where `rn > N`. modernc
+fetched_at) DESC, dedup_key DESC)` and tombstones rows where `rn > N`. modernc
   SQLite supports window functions. Age-prune runs first, then max-per-feed
   (both `WHERE tombstoned=0`), so the two `RowsAffected` counts are disjoint and
   sum correctly.
@@ -268,7 +268,7 @@ implementation, newest last. Keyed loosely by ticket.
   `fetch.go`). The ticket's design block writes `type Fetcher struct{...}` for
   the concrete impl, which does not compile in the same package. The concrete
   type is therefore `fetch.Client`, with `var _ fetch.Fetcher =
-  (*fetch.Client)(nil)` as the conformance check. Watch for this whenever a
+(*fetch.Client)(nil)` as the conformance check. Watch for this whenever a
   ticket's sketch names the struct the same as its interface.
 - Two deadlines, two mechanisms: the **connect** timeout is the `net.Dialer`
   `Timeout` (and `Transport.TLSHandshakeTimeout`); the **overall** deadline is a
@@ -371,11 +371,11 @@ implementation, newest last. Keyed loosely by ticket.
 - Encoded fixtures are generated as **real bytes via `iconv`** (no editor can be
   trusted to keep them): `iconv -t ISO-8859-1` yields raw `0xE9` for `é`, and
   UTF-16LE needs a hand-prepended `\xff\xfe` BOM (`printf '\xff\xfe' | cat -
-  ...`). `xxd` is absent in this env; use `od -A d -t x1` to verify signatures.
+...`). `xxd` is absent in this env; use `od -A d -t x1` to verify signatures.
   These fixtures stay **raw/undecoded** — the charset->UTF-8 step is fee-fp2h's
   job; `parse.New()` is only asserted against the UTF-8 fixtures.
 - A transient `go test` setup error (`stat .../testdata/internal/testsupport:
-  directory not found`) appeared once and vanished on a plain re-run; it tracks
+directory not found`) appeared once and vanished on a plain re-run; it tracks
   the harness's "modification time in the future / clock skew" warnings, not a
   real `//go:embed` problem. Re-run before chasing it.
 
@@ -469,7 +469,7 @@ implementation, newest last. Keyed loosely by ticket.
   tiers: `feedBase` is the feed's declared base (passed as `feed.Link` from the
   parser), `feedURL` is the canonical subscription URL (the `Parse` `baseURL`
   arg). Base-URL precedence is `firstNonEmpty(raw.XMLBase, item.Link, feedBase,
-  feedURL)` — the doc's three tiers (`xml:base`, item link, feed URL) plus the
+feedURL)` — the doc's three tiers (`xml:base`, item link, feed URL) plus the
   feed-link tier in the middle, which only matters for items with no own link.
 - Author cascade is `item author -> feed managingEditor -> dc:creator`. gofeed
   already unifies RSS `managingEditor` (with `dc:author`/iTunes fallbacks) onto
@@ -493,7 +493,7 @@ implementation, newest last. Keyed loosely by ticket.
 - **Do not use `charset.DetermineEncoding` for this precedence.** The ticket
   requires `BOM > XML declaration > Content-Type > lossy UTF-8`, but
   `golang.org/x/net/html/charset.DetermineEncoding` orders `BOM > Content-Type >
-  content sniff (XML/meta) > windows-1252 default`. Its Content-Type-before-XML
+content sniff (XML/meta) > windows-1252 default`. Its Content-Type-before-XML
   ordering violates the contract, and its windows-1252 fallback is not the lossy
   UTF-8 the ticket wants. `decodeBody` implements the four rungs explicitly
   instead, using `charset.Lookup(name)` for the XML-decl and Content-Type rungs.
@@ -505,7 +505,7 @@ implementation, newest last. Keyed loosely by ticket.
   little-endian (the `utf16-bom.xml` fixture is LE). UTF-8 BOM is `EF BB BF`,
   3 bytes, then `unicode.UTF8`.
 - **Lossy fallback is `bytes.ToValidUTF8(raw, replacement)`**, not the
-  `unicode.UTF8` decoder — the latter *errors* on invalid sequences rather than
+  `unicode.UTF8` decoder — the latter _errors_ on invalid sequences rather than
   replacing them. The garbage-charset and BOM-decode-failure paths both route
   here. The `replacement` is U+FFFD as a package var.
 - BOM-wins-over-Content-Type is provable end to end: feed UTF-16LE bytes with a
@@ -534,7 +534,7 @@ implementation, newest last. Keyed loosely by ticket.
   layer overlays `config.RetryAttempts` (already 3 in `config.Defaults`) via the
   option later; `fetch` still doesn't import `config` (consistent with fee-b91x).
 - **This ticket introduced HTTP-status\u2192error mapping at the fetch boundary.**
-  Before, `Fetch` returned 4xx/5xx as a *successful* `FetchResult` with the
+  Before, `Fetch` returned 4xx/5xx as a _successful_ `FetchResult` with the
   status set. The retry loop needs to know 5xx/429 are transient and "return the
   last error" on exhaustion (test 4), and 404 is deterministic (test 2), so the
   natural design is: `Fetch` now returns a `core.HTTPErr(url, status)` (CatHTTP)
@@ -577,7 +577,7 @@ implementation, newest last. Keyed loosely by ticket.
 - The verified handoff to the downstream poll lane is the `core` fetch types:
   `FetchRequest{URL,ETag,LastModified}` (conditional GET) and
   `FetchResult{NotModified,Status,FinalURL,Permanent,ETag,LastModified,Body,
-  MIMEType}` (304 skip, 301/308 URL rewrite, validators, UTF-8 body, MIME).
+MIMEType}` (304 skip, 301/308 URL rewrite, validators, UTF-8 body, MIME).
   `internal/fetch` depends only on `internal/core` (acyclic — `go list -deps`).
 - **The epic's prose says it "covers requirements 10 and 11", but requirement 11
   (worker pool, per-host serialize + delay, stable-order aggregation) has no code
@@ -633,14 +633,14 @@ implementation, newest last. Keyed loosely by ticket.
   was the four end-to-end behavior tests **and one design reconciliation the
   integration surfaced**.
 - **fee-aqkn's "`--status` never applies" decision was wrong and is reversed
-  here.** fee-c66o behavior 2 requires `migrate --status` on a *fresh* db to
+  here.** fee-c66o behavior 2 requires `migrate --status` on a _fresh_ db to
   report `schema_version >= 1, pending == 0`, the exact opposite of fee-aqkn's
   `TestMigrateStatusFreshDB` (`version==0, pending>=1`). The authoritative
   sources both say apply-on-any-command: the ticket design block ("opens/creates
   the store, **ensures schema**, prints `pending:0`") and `docs/cli-design.md`
   Schema Lifecycle ("On **any command**, feedwatch checks a stored schema version
   and **applies pending migrations idempotently**"); the doc's own `migrate
-  --status` example even shows `pending:0`. Fix was surgical: the `--status`
+--status` example even shows `pending:0`. Fix was surgical: the `--status`
   branch of `migrateAction` now calls `st.Migrate(ctx)` (discarding the count)
   before reading `SchemaVersion`/`Pending`. Updated `TestMigrateStatusFreshDB`
   to the new ensure-then-report semantics.
@@ -708,7 +708,7 @@ implementation, newest last. Keyed loosely by ticket.
   same SQL statement.
 - Backoff is `base * 2^(newCount-1)` clamped to `[base, maxBackoff]`, computed
   by **iterative doubling with an overflow guard** (`d *= 2; if d <= 0 return
-  max`), not `base << (n-1)`: an unbounded shift would wrap `time.Duration`
+max`), not `base << (n-1)`: an unbounded shift would wrap `time.Duration`
   (int64 ns) negative and schedule a retry in the past. `base <= 0` degenerates
   to `maxBackoff` (defensive; the orchestrator always passes the effective
   interval > 0).
@@ -732,7 +732,7 @@ implementation, newest last. Keyed loosely by ticket.
   (dedup-and-consume), and the envelope/exit code to `fee-12gs`. `feedOutcome`,
   `orchestrate`, and `fetchAndParse` stay **unexported** (the two sibling poll
   tickets share the package); only `Deps{Store,Fetcher,Parser,Clock,
-  Concurrency,PerHostDelay}` is exported, for the cli wiring `fee-12gs` will add.
+Concurrency,PerHostDelay}` is exported, for the cli wiring `fee-12gs` will add.
 - **Per-host politeness is the worker unit, not the feed.** Feeds are grouped by
   `url.Parse(...).Host` (raw string fallback for unparseable URLs); each host
   group is one `errgroup.Go` task that processes its feeds **sequentially** with
@@ -749,7 +749,7 @@ implementation, newest last. Keyed loosely by ticket.
   parent (signal-aware) context cancels it. Don't return the per-feed error from
   the `g.Go` func or one bad feed would cancel the rest.
 - **Stable output order + dropped-on-cancel** via `outcomes := make([]*feedOutcome,
-  len(feeds))` written at each feed's input index, then collected non-nil in
+len(feeds))` written at each feed's input index, then collected non-nil in
   order. A cancelled run leaves unscheduled/aborted feeds as `nil` slots, which
   are filtered out — so `len(result) < len(feeds)` is the observable signal that
   scheduling stopped (behavior 5). Cancellation is checked with a
@@ -833,9 +833,9 @@ implementation, newest last. Keyed loosely by ticket.
   appends to `feedErrs` exactly when it increments `failed`), so the cli could use
   either; `Result.Failed` keeps the derivation inside `poll`.
 - **The stdout `PollResult` envelope has NO failed count** (`{polled,skipped,
-  new_items,items}`), matching the design's streams contract: the exit code
-  reports *whether* feeds failed, stderr (`renderer.Errors` -> `{"errors":[...]}`)
-  reports *which*. `poll.Result` carries `Failed` for the exit-code math but the
+new_items,items}`), matching the design's streams contract: the exit code
+  reports _whether_ feeds failed, stderr (`renderer.Errors` -> `{"errors":[...]}`)
+  reports _which_. `poll.Result` carries `Failed` for the exit-code math but the
   cli maps `Result -> PollResult` dropping it. Don't add `failed` to the stdout
   envelope.
 - **Stable item order from a per-feed map:** `consume`'s `totals.newByFeed` is
@@ -847,7 +847,7 @@ implementation, newest last. Keyed loosely by ticket.
   0 for named/forced runs (they target regardless of schedule); for the unnamed
   due path it runs `ListFeeds(active)` and reports `len(active) - polled`
   (active-but-not-due). Taken before orchestrate/consume so a feed auto-disabled
-  *during* the run stays counted in `polled`, not `skipped`.
+  _during_ the run stays counted in `polled`, not `skipped`.
 - **Test seam: `pollDeps` prefers injected `Deps.Store/Fetch/Parse`, builds
   production ones otherwise.** The cli `Deps` already had these fields (nil in
   `main`). The poll command tests inject `testsupport` doubles via a `runPoll`
@@ -885,7 +885,7 @@ implementation, newest last. Keyed loosely by ticket.
 - **Validation is two gates, both mapped to `CatUsage` (exit 1).** Gate 1
   (`validateFeedURL`): `url.Parse` then require scheme `http`/`https` AND non-empty
   `Host` — a bare host like `example.com` parses with empty scheme/host and is
-  rejected *before any fetch* (asserted via `fetcher.Requests(url)` being empty).
+  rejected _before any fetch_ (asserted via `fetcher.Requests(url)` being empty).
   Gate 2 (`validateParsesAsFeed`): fetch then parse; a parse failure means "not a
   feed" and the message points at `discover`. **Both fetch errors and parse errors
   are deliberately re-wrapped as `CatUsage`**, not surfaced with their native
@@ -926,7 +926,7 @@ implementation, newest last. Keyed loosely by ticket.
   Per the color rule, status carries its own word, so the `color` arg is unused
   and no ANSI is emitted (no color is the sole carrier of meaning).
 - **Empty-list shape: build with `make([]FeedView, 0, len(feeds))`, not `var
-  s []FeedView`.** A nil slice marshals to `null`; the design and the agent-first
+s []FeedView`.** A nil slice marshals to `null`; the design and the agent-first
   contract want `{"feeds":[]}` so an agent can iterate without a nil check. The
   behavior-3 test asserts the literal `"feeds":[]` substring, not just
   `len==0`.
@@ -972,7 +972,7 @@ implementation, newest last. Keyed loosely by ticket.
   `store.RecordSuccess(url, now, now)` (clears `failure_count`, `last_error`,
   `last_error_at`) with `nextDue = now`, so `DueFeeds(now)` includes the feed on
   the very next poll. `poll.RecordSuccess` was deliberately NOT used: it
-  schedules `now + interval`, which would leave a freshly-enabled feed *not* due
+  schedules `now + interval`, which would leave a freshly-enabled feed _not_ due
   until an interval elapses, contradicting the ticket's "clear backoff so the
   feed is due again." The store method is the literal failure-lifecycle reset
   path; the `poll` helper adds the forward scheduling that enable does not want.
@@ -1059,15 +1059,15 @@ implementation, newest last. Keyed loosely by ticket.
   discover/export tasks) E5 had to close first — closing it is what lets E6/E7
   ever become closeable and makes import ready.
 - Live req-7 smoke test against the native binary + a local `python3 -m
-  http.server` RSS feed: `add --alias` (`created:true`), `list` (active,
+http.server` RSS feed: `add --alias` (`created:true`), `list` (active,
   failures 0), `disable` (`status:disabled`), `enable` (back to active, failures
   reset to 0), `rm` (`removed`, list empty) — all exit 0 with the documented JSON
   envelopes. `add` needs `--allow-private` because the loopback server is private
-  address space (the SSRF guard only exempts the *initial* directly-supplied URL
+  address space (the SSRF guard only exempts the _initial_ directly-supplied URL
   from redirects, but `add`'s validation fetch of a 127.0.0.1 URL is allowed; the
   flag is belt-and-suspenders here and required once a redirect is involved).
 - Live req-15 smoke test: add the valid feed, kill the server, then `poll
-  --force smoke` with short timeouts. Result recorded `failures:1` + `last_error`
+--force smoke` with short timeouts. Result recorded `failures:1` + `last_error`
   on the feed row, emitted a structured `network` `*FeedError` on stderr, and
   exited **2** (all targeted feeds failed). The full backoff / auto-disable /
   reset-on-success policy is covered by `fee-vzu8`'s unit tests; one forced
@@ -1141,7 +1141,7 @@ implementation, newest last. Keyed loosely by ticket.
 ## fee-jf82 — OPML import command
 
 - New `internal/opml` package owns parsing only (deep-module split): `Parse(io.
-  Reader) ([]Feed, []Invalid, error)` decodes with `encoding/xml` and walks
+Reader) ([]Feed, []Invalid, error)` decodes with `encoding/xml` and walks
   outlines recursively. Classification per outline: a resolvable URL (`xmlUrl`
   then `url` fallback) -> `Feed`; no URL but a feed `type` (`rss`/`atom`/`rdf`)
   -> `Invalid` (this is how a "malformed entry" is detected and reported);
@@ -1173,7 +1173,7 @@ implementation, newest last. Keyed loosely by ticket.
   required, not stylistic: the doc's `feedwatch export | curl ...` usage and the
   import round-trip both need OPML on stdout, and `import -` reads OPML from
   stdin. So the streams contract ("stdout is pure result JSON") has one
-  deliberate exception — when the result *is* a document, the document is the
+  deliberate exception — when the result _is_ a document, the document is the
   result. The action reaches `r.Out` via `rendererFrom(ctx)` and writes there.
 - **Serialization is `opml.Write(io.Writer, []Feed)` in `internal/opml`**, the
   deep-module counterpart to `opml.Parse` (same split as the import side). It
@@ -1192,7 +1192,7 @@ implementation, newest last. Keyed loosely by ticket.
   than emitting an empty label. Round-trip quirk: re-importing such a feed makes
   the URL its alias (import assigns a free title as alias). Accepted and
   documented per the ticket's "text/title from the alias or URL"; round-trip
-  *cleanliness* means the feeds re-import (matching `added` count) and aliased
+  _cleanliness_ means the feeds re-import (matching `added` count) and aliased
   feeds preserve their alias, which `TestExportRoundTripsWithImport` asserts via
   `GetFeed("Alpha")`.
 - **gosec G304 fires on `os.ReadFile(varPath)` in tests too**, even when the path
@@ -1233,7 +1233,7 @@ implementation, newest last. Keyed loosely by ticket.
 ## fee-wwyw — schema command
 
 - **`TypeName()` is the wrong source for flag types and is the trap this ticket
-  turns on.** `urfave`'s `FlagBase.TypeName()` returns the slice *element* type
+  turns on.** `urfave`'s `FlagBase.TypeName()` returns the slice _element_ type
   for a slice flag, so a `*cli.StringSliceFlag` reports `"string"`, identical to
   a plain `*cli.StringFlag` — the TDD plan's "report stringSlice correctly"
   fails if you lean on it. The fix is the design's own prescription: a **type
@@ -1249,7 +1249,7 @@ implementation, newest last. Keyed loosely by ticket.
   `Name` field off the concrete type. Same shape as the flag switch.
 - **Default omitted when zero** (`any` default field + `omitempty`, set only for
   non-zero values) so the output matches the design's `{"name":"--force",
-  "type":"bool"}` example with no `default` key. A bool `false`, int `0`, empty
+"type":"bool"}` example with no `default` key. A bool `false`, int `0`, empty
   string, `0s` duration, and empty slice all render as "no default".
 - **Filter the framework's conventional help/version surface.** urfave
   auto-adds a non-hidden `help` **command** and `--help`/`--version` **flags** to
@@ -1272,7 +1272,7 @@ implementation, newest last. Keyed loosely by ticket.
   that discoverability is wanted later, add `&cli.StringArgs{Name:"feed"}` to
   `pollCommand` — the schema will then pick it up automatically.
 - Output envelope shapes: bare `schema` -> `{commands:[CommandSchema...],
-  global_flags:[FlagSchema...]}` (global flags reuse the same introspection on
+global_flags:[FlagSchema...]}` (global flags reuse the same introspection on
   `root.Flags`); `schema <command>` -> a bare `CommandSchema`. Unknown command
   reuses `root.go`'s `unknownCommandErr` (`CatUsage`) -> exit 1, empty stdout.
 
@@ -1285,12 +1285,12 @@ implementation, newest last. Keyed loosely by ticket.
   live contract verification on a native binary.
 - Verified end-to-end against `go build -o /tmp/feedwatch ./cmd/feedwatch`: bare
   `schema` emits all **13** commands (`migrate poll add list rm enable disable
-  items prune discover import export schema`) plus all 13 `global_flags`, each
+items prune discover import export schema`) plus all 13 `global_flags`, each
   `CommandSchema` carrying `command`/`args`/`flags`(name,type,default)/
   `exit_codes`/`output_schema`; `schema <command>` narrows to one
   `CommandSchema`; every per-command schema parses as JSON with the five
   required keys; `schema bogus` -> exit 1 with a `{"error":{"category":"usage",
-  ...}}` object on stderr and **empty stdout**; `--help` and subcommand `-h`
+...}}` object on stderr and **empty stdout**; `--help` and subcommand `-h`
   print human usage to stdout (unaffected by `--format`).
 - Closing E8 makes its two blocked children **ready**: fee-d38c (golden-file
   end-to-end suite) and fee-v2e5 (user documentation), which jointly gate
@@ -1333,11 +1333,11 @@ implementation, newest last. Keyed loosely by ticket.
 - TDD flow for a golden suite: write the suite (red: goldens missing), run with
   `-update` to generate, **inspect every generated golden by hand** against the
   documented contract, then run without `-update` (green). The reviewed golden
-  content *is* the assertion, so the inspection step is the real test-writing.
+  content _is_ the assertion, so the inspection step is the real test-writing.
 - gosec on `_test.go` fires three times here, all genuine documented exceptions
   (not `_ =` silencing): **G204** on both `exec.Command` calls (building and
   running the binary), **G101** false-positive on `const feedHostToken =
-  "http://feedserver"` (reads as a hardcoded credential), and **G304/G306** on
+"http://feedserver"` (reads as a hardcoded credential), and **G304/G306** on
   the golden `os.ReadFile`/`os.WriteFile` with a computed path. Each got a
   one-line `//nolint:gosec // <rule>: <why>`.
 
@@ -1392,7 +1392,7 @@ implementation, newest last. Keyed loosely by ticket.
   filed). It is out of scope for this roll-up epic, and activating a GitHub
   Actions workflow on the user's repo is the user's call. The workflow file is
   complete and ready (`setup-go` 1.26, module cache, `make validate` + `make
-  build` on push/PR); activating it is just a rename of
+build` on push/PR); activating it is just a rename of
   `.github/workflows/ci.yml.disabled` to `ci.yml`, plus a one-time check that a
   deliberately-broken commit fails CI.
 
@@ -1404,7 +1404,7 @@ implementation, newest last. Keyed loosely by ticket.
   `Deps.Version`, `vcs.revision` commit lookup) was already correct and needed
   no change — only compute -> inject -> resolve was missing.
 - New `src/internal/version` package is the single source of truth: a `var
-  Override` (set at link time) and `Current()` with a three-tier fallback
+Override` (set at link time) and `Current()` with a three-tier fallback
   `Override -> debug.ReadBuildInfo().Main.Version -> "dev"`. The middle tier
   **must** skip both `""` and `"(devel)"`: `Main.Version` is `"(devel)"` for a
   bare `go build` and is only a real semver under `go install ...@vX.Y.Z`, so
@@ -1415,7 +1415,7 @@ implementation, newest last. Keyed loosely by ticket.
   through the existing `Deps.Version` field, not called deeper in the tree —
   keeps the single source of truth while preserving the testable `Deps` seam.
 - Makefile: `LDFLAGS := -s -w -buildid= -X
-  github.com/andreswebs/feedwatch/internal/version.Override=$(VERSION)` plus new
+github.com/andreswebs/feedwatch/internal/version.Override=$(VERSION)` plus new
   `BUILDFLAGS := -trimpath`, applied to `build-local`, the `build-target`
   cross-compile template, and `run`. `-buildid=`/`-trimpath` make builds
   reproducible; the `-X` path is the full module path to the package var, not
@@ -1562,7 +1562,7 @@ implementation, newest last. Keyed loosely by ticket.
 ## fee-j4w1 — items: --fields projection subset and unknown-field rejection
 
 - The pre-fix `--fields` bug was two-layered. The store/double already projected
-  *columns* correctly (always-on `feed_url`/`dedup_key`/`published_at`/
+  _columns_ correctly (always-on `feed_url`/`dedup_key`/`published_at`/
   `fetched_at` plus the requested ones), but the CLI serialized the result as a
   `core.Item`, whose JSON tags have **no `omitempty` on `feed_url`/`title`/
   `link`/`published_at`** — so those four always appeared regardless of the
@@ -1601,17 +1601,17 @@ implementation, newest last. Keyed loosely by ticket.
   so the rewrite applies there too.
 - **Renaming a SQLite primary key that child rows reference trips the immediate
   `items -> feeds` foreign key mid-transaction.** The FK (`feed_url REFERENCES
-  feeds(url) ON DELETE CASCADE`) is not `DEFERRABLE`, so updating `feeds.url` first
+feeds(url) ON DELETE CASCADE`) is not `DEFERRABLE`, so updating `feeds.url` first
   orphans the items, and updating `items.feed_url` first points them at a not-yet-
   existing parent — both fail at statement end. Fix: `PRAGMA defer_foreign_keys =
-  ON` as the first statement inside the rename transaction. It defers all FK checks
+ON` as the first statement inside the rename transaction. It defers all FK checks
   to COMMIT (regardless of how the constraint was declared), is scoped to that
   transaction's connection, and auto-resets at COMMIT — no migration/table rebuild
   needed. Order of the two UPDATEs then no longer matters.
 - The rewrite is the **last** write in `consumeSuccess` and the in-memory
   `oc.feed.URL` is never mutated, so the earlier `SetValidators`/`UpsertItems`
   (keyed on the original URL) and the `Run` item-assembly stay correct. Side effect:
-  the poll envelope's `items[].feed_url` still shows the *old* URL for the poll that
+  the poll envelope's `items[].feed_url` still shows the _old_ URL for the poll that
   performs the rename (assembled in-memory pre-rename); the next `items` query
   returns them under the new URL. Acceptable and confirmed by manual QA.
 - A redirect target already subscribed as a different feed **skips** the rewrite
@@ -1632,19 +1632,19 @@ implementation, newest last. Keyed loosely by ticket.
   an unresponsive store. No `ctx.Done()` guard was added to `consume`: guarding
   there would skip persisting outcomes when the signal arrived during the fetch
   phase, which is the common case and the exact source of the "0 rows" symptom.
-- **The cli boundary exits from *inside* `Run`, not after it.** urfave/cli's
+- **The cli boundary exits from _inside_ `Run`, not after it.** urfave/cli's
   `ExitErrHandler` (our `exitErrHandler`) maps a feed-outcome `ExitCoder` to a
   code by calling `cliv3.OsExiter(code)` — and `OsExiter` defaults to `os.Exit`.
   So a post-`Run` signal check in `main` is dead code: the process has already
   exited (with 3, in the partial case) before `Run` returns. The fix wraps
   `cliv3.OsExiter` in `main` to override the code with `128+signum` when a signal
   was caught. A happens-before chain makes this race-free: the handler goroutine
-  does `caught <- s` (buffered) *before* `cancel()`, and only that `cancel()`
+  does `caught <- s` (buffered) _before_ `cancel()`, and only that `cancel()`
   drives the cancellation that unwinds `Run` into `OsExiter`, so the buffered
   signal is always observable by the time the wrapped exiter runs. A second
   post-`Run` check covers the clean-exit path (exit 0, `OsExiter` never called).
 - **Backstop in `feedErrorFor`** (`cli/root.go`): `errors.Is(err,
-  context.Canceled|DeadlineExceeded)` now maps to `CatTimeout` instead of falling
+context.Canceled|DeadlineExceeded)` now maps to `CatTimeout` instead of falling
   through to `CatInternal`, so any residual cancellation at other store sites
   cannot leak as an `internal` error. An explicit `*FeedError` in the chain still
   wins (checked first).
@@ -1653,7 +1653,7 @@ implementation, newest last. Keyed loosely by ticket.
   fetcher that signals when the fast feed completed and the slow one is in flight,
   so the interrupt is delivered deterministically (no `time.Sleep`). The
   signal-to-exit-code mapping lives in `main`, so it needs an end-to-end test:
-  spawn the real binary, two feeds on *different* httptest hosts (same host would
+  spawn the real binary, two feeds on _different_ httptest hosts (same host would
   serialize onto one worker via per-host grouping and never fetch the fast one
   before the interrupt), `SIGINT`/`SIGTERM` after a short sleep, assert exit
   130/143, completed-feed items queryable, and no `"category":"internal"` on

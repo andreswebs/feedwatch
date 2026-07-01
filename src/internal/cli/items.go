@@ -15,17 +15,23 @@ import (
 )
 
 // ItemsResult is the items stdout envelope for a full (unprojected) query: the
-// matched item history in query order.
+// matched item history in query order. OmittedNoDate, present only when nonzero,
+// counts items a publication-axis date window excluded for a null publication
+// time.
 type ItemsResult struct {
-	Items []core.Item `json:"items" jsonschema:"opaque"`
+	Items         []core.Item `json:"items" jsonschema:"opaque"`
+	OmittedNoDate int         `json:"omitted_no_date,omitempty"`
 }
 
 // ProjectedItemsResult is the items stdout envelope when --fields narrows the
 // output to a subset. Each item is a map of feed_url plus the requested fields;
 // fields records the projection order so text rendering can mirror it.
+// OmittedNoDate carries the same publication-axis exclusion count, regardless of
+// projection.
 type ProjectedItemsResult struct {
-	Items  []map[string]any `json:"items" jsonschema:"opaque"`
-	fields []string
+	Items         []map[string]any `json:"items" jsonschema:"opaque"`
+	OmittedNoDate int              `json:"omitted_no_date,omitempty"`
+	fields        []string
 }
 
 // itemsCommand registers the items subcommand: query stored item history with
@@ -41,6 +47,7 @@ func (d Deps) itemsCommand() *cliv3.Command {
 			&cliv3.IntFlag{Name: "limit", Usage: "maximum items to return; 0 returns all"},
 			&cliv3.IntFlag{Name: "offset", Usage: "items to skip before returning results"},
 			&cliv3.StringFlag{Name: "order", Value: "published desc", Usage: "sort: 'published|fetched asc|desc'"},
+			&cliv3.StringFlag{Name: "time-field", Value: "published", Usage: "axis for --since/--until: 'published' or 'fetched'"},
 			&cliv3.StringFlag{Name: "contains", Usage: "substring matched over title and content"},
 			&cliv3.StringSliceFlag{Name: "fields", Usage: "project to a subset of item fields; full item when omitted"},
 		},
@@ -68,21 +75,30 @@ func (d Deps) itemsAction(ctx context.Context, cmd *cliv3.Command) error {
 		return err
 	}
 
-	items, err := st.QueryItems(ctx, q)
+	qr, err := st.QueryItems(ctx, q)
 	if err != nil {
 		return err
 	}
+	items := qr.Items
+
+	if qr.OmittedNoDate > 0 {
+		loggerFrom(ctx).InfoContext(ctx, "excluded items with no publication date",
+			"count", qr.OmittedNoDate, "axis", "published")
+	}
+
 	if len(q.Fields) > 0 {
 		projected := make([]map[string]any, len(items))
 		for i, it := range items {
 			projected[i] = core.ProjectItem(it, q.Fields)
 		}
-		return r.Result(ProjectedItemsResult{Items: projected, fields: q.Fields})
+		return r.Result(ProjectedItemsResult{
+			Items: projected, OmittedNoDate: qr.OmittedNoDate, fields: q.Fields,
+		})
 	}
 	if items == nil {
 		items = []core.Item{}
 	}
-	return r.Result(ItemsResult{Items: items})
+	return r.Result(ItemsResult{Items: items, OmittedNoDate: qr.OmittedNoDate})
 }
 
 // buildItemQuery assembles a core.ItemQuery from the command flags, resolving
@@ -90,8 +106,11 @@ func (d Deps) itemsAction(ctx context.Context, cmd *cliv3.Command) error {
 func buildItemQuery(cmd *cliv3.Command, now time.Time) (core.ItemQuery, error) {
 	fields := cmd.StringSlice("fields")
 	for _, f := range fields {
+		if f == "feed_url" { // always-on identity field: naming it is a no-op
+			continue
+		}
 		if !core.ValidItemFields[f] {
-			return core.ItemQuery{}, usageErr("--fields: unknown field " + strconv.Quote(f))
+			return core.ItemQuery{}, usageErr(unknownFieldMessage(f))
 		}
 	}
 
@@ -123,6 +142,15 @@ func buildItemQuery(cmd *cliv3.Command, now time.Time) (core.ItemQuery, error) {
 		return core.ItemQuery{}, err
 	}
 	q.Order = order
+
+	switch tf := cmd.String("time-field"); tf {
+	case "", "published":
+		q.TimeField = "published"
+	case "fetched":
+		q.TimeField = "fetched"
+	default:
+		return core.ItemQuery{}, usageErr("--time-field must be 'published' or 'fetched', got " + strconv.Quote(tf))
+	}
 
 	return q, nil
 }

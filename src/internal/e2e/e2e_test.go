@@ -138,6 +138,9 @@ func exitCodeOf(err error) int {
 var (
 	reCommit = regexp.MustCompile(`"commit":"[^"]*"`)
 	reGo     = regexp.MustCompile(`"go":"[^"]*"`)
+	// fetched_at is the wall-clock moment feedwatch first recorded an item, so it
+	// is volatile across runs and normalized to a stable token.
+	reFetchedAt = regexp.MustCompile(`"fetched_at":"[^"]*"`)
 )
 
 // normalize rewrites the volatile parts of an output stream into stable tokens:
@@ -151,6 +154,7 @@ func normalize(b []byte, serverBase string) []byte {
 	}
 	s = reCommit.ReplaceAllString(s, `"commit":"<commit>"`)
 	s = reGo.ReplaceAllString(s, `"go":"<go>"`)
+	s = reFetchedAt.ReplaceAllString(s, `"fetched_at":"<fetched_at>"`)
 	return []byte(s)
 }
 

@@ -113,7 +113,7 @@ func TestRecordSuccessResetsFailureStateAndSchedulesInterval(t *testing.T) {
 	}
 
 	const def = time.Hour
-	if err := poll.RecordSuccess(ctx, s, fixedClock, url, 30*time.Minute, def, ""); err != nil {
+	if _, err := poll.RecordSuccess(ctx, s, fixedClock, url, 30*time.Minute, def, ""); err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
 	}
 
@@ -144,7 +144,7 @@ func TestRecordSuccessFallsBackToDefaultInterval(t *testing.T) {
 	ctx := context.Background()
 
 	const def = time.Hour
-	if err := poll.RecordSuccess(ctx, s, fixedClock, url, 0, def, ""); err != nil {
+	if _, err := poll.RecordSuccess(ctx, s, fixedClock, url, 0, def, ""); err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
 	}
 	f, err := s.GetFeed(ctx, url)

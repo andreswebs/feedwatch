@@ -144,7 +144,7 @@ func TestExportRoundTripsWithImport(t *testing.T) {
 	}
 
 	dst := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
-	res := runImport(t, dst, nil, out)
+	res := runImport(t, dst, nil, "--no-validate", out)
 	if res.exited {
 		t.Fatalf("import of exported OPML should exit 0, got code %d (stderr %q)", res.code, res.err)
 	}

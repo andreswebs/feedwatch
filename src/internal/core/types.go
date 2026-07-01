@@ -29,6 +29,13 @@ type Feed struct {
 	UpdatedAt    time.Time
 }
 
+// FeedRename records a feed URL changed by a permanent-redirect rewrite during
+// a poll. Its JSON tags define the agent-facing shape in the poll envelope.
+type FeedRename struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 // Enclosure is a media attachment advertised by a feed item.
 type Enclosure struct {
 	URL    string `json:"url"`
@@ -53,6 +60,6 @@ type Item struct {
 	Enclosures      []Enclosure `json:"enclosures,omitempty"`
 	PublishedAt     *time.Time  `json:"published_at"` // null when unparseable
 	UpdatedAt       *time.Time  `json:"updated_at,omitempty"`
-	FetchedAt       time.Time   `json:"-"`
+	FetchedAt       time.Time   `json:"fetched_at"`
 	Seen            bool        `json:"-"`
 }

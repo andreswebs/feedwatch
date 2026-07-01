@@ -20,6 +20,7 @@ type pollTotals struct {
 	newItems  int
 	failed    int
 	newByFeed map[string][]core.Item
+	renames   []core.FeedRename
 }
 
 // consume turns fetch/parse outcomes into persisted state, the dedup-and-consume
@@ -48,13 +49,16 @@ func consume(ctx context.Context, d Deps, outcomes []feedOutcome) (pollTotals, [
 			continue
 		}
 
-		newItems, err := d.consumeSuccess(ctx, oc)
+		newItems, renamedTo, err := d.consumeSuccess(ctx, oc)
 		if err != nil {
 			return totals, feedErrs, err
 		}
 		if len(newItems) > 0 {
 			totals.newByFeed[oc.feed.URL] = newItems
 			totals.newItems += len(newItems)
+		}
+		if renamedTo != "" {
+			totals.renames = append(totals.renames, core.FeedRename{From: oc.feed.URL, To: renamedTo})
 		}
 	}
 
@@ -64,10 +68,11 @@ func consume(ctx context.Context, d Deps, outcomes []feedOutcome) (pollTotals, [
 // consumeSuccess persists a successful (200 or 304) outcome: it writes any
 // changed validators, upserts the parsed items (skipped on a 304, which carries
 // none), and records the success with the next-due schedule. It returns the
-// newly-seen items.
-func (d Deps) consumeSuccess(ctx context.Context, oc feedOutcome) ([]core.Item, error) {
+// newly-seen items and, when a permanent-redirect rewrite was applied, the new
+// canonical URL (else "").
+func (d Deps) consumeSuccess(ctx context.Context, oc feedOutcome) ([]core.Item, string, error) {
 	if err := d.Store.SetValidators(ctx, oc.feed.URL, oc.result.ETag, oc.result.LastModified); err != nil {
-		return nil, fmt.Errorf("persist validators for %q: %w", oc.feed.URL, err)
+		return nil, "", fmt.Errorf("persist validators for %q: %w", oc.feed.URL, err)
 	}
 
 	var newItems []core.Item
@@ -78,7 +83,7 @@ func (d Deps) consumeSuccess(ctx context.Context, oc feedOutcome) ([]core.Item, 
 		}
 		n, err := d.Store.UpsertItems(ctx, oc.feed.URL, items)
 		if err != nil {
-			return nil, fmt.Errorf("upsert items for %q: %w", oc.feed.URL, err)
+			return nil, "", fmt.Errorf("upsert items for %q: %w", oc.feed.URL, err)
 		}
 		newItems = n
 	}
@@ -94,10 +99,11 @@ func (d Deps) consumeSuccess(ctx context.Context, oc feedOutcome) ([]core.Item, 
 	}
 
 	interval := effectiveInterval(oc.feed.Interval, oc.parsed.TTL, d.DefaultInterval)
-	if err := RecordSuccess(ctx, d.Store, d.Clock, oc.feed.URL, interval, d.DefaultInterval, finalURL); err != nil {
-		return nil, fmt.Errorf("record success for %q: %w", oc.feed.URL, err)
+	renamedTo, err := RecordSuccess(ctx, d.Store, d.Clock, oc.feed.URL, interval, d.DefaultInterval, finalURL)
+	if err != nil {
+		return nil, "", fmt.Errorf("record success for %q: %w", oc.feed.URL, err)
 	}
-	return newItems, nil
+	return newItems, renamedTo, nil
 }
 
 // recordFailure drives the failure lifecycle for a failed outcome, using the

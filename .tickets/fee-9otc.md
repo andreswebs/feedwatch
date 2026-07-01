@@ -1,6 +1,6 @@
 ---
 id: fee-9otc
-status: open
+status: closed
 deps: [fee-e1s2]
 links: []
 created: 2026-06-30T22:54:52Z
@@ -156,3 +156,9 @@ the kind of dishonesty this beta set is removing.
   "Feed identity churn".
 - Builds on: `fee-n6j6` (the 301/308 rewrite and item cascade). Depends on:
   `fee-e1s2` (Req 1) for the expanded poll envelope.
+
+## Notes
+
+**2026-07-01T00:03:36Z**
+
+Implemented Req 6 (permanent-redirect rename visibility). Store.RecordSuccess now returns (renamedTo string, err error): the actual landing URL when a 301/308 rename was applied, or "" when unchanged (including a rename declined because the target was already subscribed) — so poll reports what the store did, not what it intended. Threaded through poll.RecordSuccess helper, consumeSuccess, pollTotals.renames, poll.Result.Renamed, into cli PollResult.Renamed (json "renamed", always [] never null). Added core.FeedRename{From,To}. Emits one INFO stderr line 'renamed feeds after permanent redirect' with count when >=1 rename (default log level is info). Updated all RecordSuccess implementers/callers (sqlite, in-memory double, fakeStore mock, run_interrupt wrapper, enable.go). Tests: poll.Run rename/declined/temporary cases, cli envelope+log-line, in-memory + sqlite store return-value tests. Regenerated e2e poll goldens (+"renamed":[]) and updated TestOutputSchemaContractPreserved. make build green.

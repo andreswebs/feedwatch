@@ -300,8 +300,8 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 		"enable":   {[]string{"feed"}, []string{"feed"}},
 		"disable":  {[]string{"feed"}, []string{"feed"}},
 		"prune":    {[]string{"pruned"}, []string{"pruned"}},
-		"items":    {[]string{"items"}, []string{"items"}},
-		"poll":     {[]string{"polled", "skipped", "new_items", "items"}, []string{"polled", "skipped", "new_items", "items"}},
+		"items":    {[]string{"items", "omitted_no_date"}, []string{"items"}},
+		"poll":     {[]string{"polled", "succeeded", "failed", "skipped", "new_items", "items", "failures", "renamed"}, []string{"polled", "succeeded", "failed", "skipped", "new_items", "items", "failures", "renamed"}},
 		"discover": {[]string{"candidates"}, []string{"candidates"}},
 		"import":   {[]string{"added", "skipped", "failed"}, []string{"added", "skipped", "failed"}},
 	}

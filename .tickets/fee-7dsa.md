@@ -1,6 +1,6 @@
 ---
 id: fee-7dsa
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-06-30T22:54:52Z
@@ -174,3 +174,9 @@ sequential and deterministic.
 - Field notes: [usage-learnings.md](../docs/specs/002-beta/usage-learnings.md),
   "Bulk subscribe via OPML import".
 - Reuses: `validateParsesAsFeed` from `add` (`src/internal/cli/add.go`).
+
+## Notes
+
+**2026-06-30T23:36:25Z**
+
+Validated import implemented (Req 4). import now fetches+parses each feed before subscribing by default, reusing add's validateParsesAsFeed; --no-validate restores fast bulk-add with no fetch. importFeeds restructured into 3 phases: sequential classify (dedup + URL reservation + syntax), concurrent validation (errgroup limited to cfg.Concurrency, position-indexed slots, each g.Go returns nil so one failure never cancels siblings), sequential subscribe (deterministic alias assignment). Failed feeds land in the per-entry failed list with a fetch/parse reason; added counts only validated+subscribed feeds. ImportResult shape unchanged. Tests: TestImportValidatesByDefault (good+dead+html mix), TestImportNoValidateSkipsFetch (recording fetcher asserts zero calls), TestImportValidatesConcurrently (gateFetcher proves peak concurrency == candidate count and a parse failure doesn't cancel siblings). Existing classification cli/import tests + export round-trip moved to --no-validate; e2e TestImportExportPrune keeps default validation against a real feed server; signal_test uses --no-validate (slow feed deliberately unreachable). Docs: usage.md + learnings.md (Req 4 heading). Caveat lives in flag Usage + usage.md since schema carries no per-flag description; machine-readable validated boolean left out of scope. make build green.

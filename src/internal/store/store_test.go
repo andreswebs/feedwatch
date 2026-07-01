@@ -30,8 +30,8 @@ func (*fakeStore) SetStatus(context.Context, string, core.FeedStatus) error { re
 func (*fakeStore) SetValidators(context.Context, string, string, string) error {
 	return nil
 }
-func (*fakeStore) RecordSuccess(context.Context, string, time.Time, time.Time, string) error {
-	return nil
+func (*fakeStore) RecordSuccess(context.Context, string, time.Time, time.Time, string) (string, error) {
+	return "", nil
 }
 func (*fakeStore) RecordFailure(context.Context, string, core.Category, string, time.Time, time.Time) error {
 	return nil
@@ -39,8 +39,8 @@ func (*fakeStore) RecordFailure(context.Context, string, core.Category, string, 
 func (*fakeStore) UpsertItems(context.Context, string, []core.Item) ([]core.Item, error) {
 	return nil, nil
 }
-func (*fakeStore) QueryItems(context.Context, core.ItemQuery) ([]core.Item, error) {
-	return nil, nil
+func (*fakeStore) QueryItems(context.Context, core.ItemQuery) (core.ItemQueryResult, error) {
+	return core.ItemQueryResult{}, nil
 }
 func (*fakeStore) PruneItems(context.Context, core.PrunePolicy) (int, error) {
 	return 0, nil

@@ -1,6 +1,9 @@
 package core
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // ListFilter narrows a feed listing. A zero value matches every feed.
 type ListFilter struct {
@@ -15,14 +18,15 @@ type ItemOrder struct {
 
 // ItemQuery is the filter, projection, sort, and pagination for item history.
 type ItemQuery struct {
-	Feeds    []string // url or alias; empty matches all
-	Since    *time.Time
-	Until    *time.Time
-	Contains string
-	Limit    int
-	Offset   int
-	Order    ItemOrder
-	Fields   []string // projection; empty selects all fields
+	Feeds     []string // url or alias; empty matches all
+	Since     *time.Time
+	Until     *time.Time
+	Contains  string
+	Limit     int
+	Offset    int
+	Order     ItemOrder
+	Fields    []string // projection; empty selects all fields
+	TimeField string   // axis for Since/Until: "published" (default, "") or "fetched"
 }
 
 // ValidItemFields is the set of field names accepted by `items --fields`. It is
@@ -33,7 +37,20 @@ var ValidItemFields = map[string]bool{
 	"id": true, "title": true, "link": true, "summary": true,
 	"content_html": true, "content_text": true, "content_mime_type": true,
 	"base_url": true, "author": true, "categories": true, "enclosures": true,
-	"published_at": true, "updated_at": true,
+	"published_at": true, "updated_at": true, "fetched_at": true,
+}
+
+// ItemFieldNames returns the projectable field names plus the always-on
+// feed_url identity field, sorted, for did-you-mean suggestions and help text.
+// Sorting keeps the output deterministic, since ValidItemFields is a map.
+func ItemFieldNames() []string {
+	names := make([]string, 0, len(ValidItemFields)+1)
+	for f := range ValidItemFields {
+		names = append(names, f)
+	}
+	names = append(names, "feed_url")
+	sort.Strings(names)
+	return names
 }
 
 // ProjectItem renders it into a map keyed by the requested field names, always
@@ -71,9 +88,21 @@ func ProjectItem(it Item, fields []string) map[string]any {
 			out["published_at"] = it.PublishedAt
 		case "updated_at":
 			out["updated_at"] = it.UpdatedAt
+		case "fetched_at":
+			out["fetched_at"] = it.FetchedAt
 		}
 	}
 	return out
+}
+
+// ItemQueryResult carries the matched items and the number of items excluded
+// from a publication-axis date window solely because their publication time was
+// null. OmittedNoDate is zero on the fetch axis and when no date filter is
+// active, since the fetch time is never null and an unfiltered query excludes
+// nothing.
+type ItemQueryResult struct {
+	Items         []Item
+	OmittedNoDate int
 }
 
 // PrunePolicy bounds stored history by age, per-feed count, or both. A pruned

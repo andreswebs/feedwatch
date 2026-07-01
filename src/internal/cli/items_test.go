@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,7 +114,8 @@ func TestItemsByFeed(t *testing.T) {
 }
 
 // TestItemsSinceUntilWindow covers behavior 2: --since/--until filter by time
-// window, and a null published_at coalesces to fetched_at.
+// window on the publication axis, excluding null-publication items (the Req 3
+// breaking change: no coalesce to fetched_at).
 func TestItemsSinceUntilWindow(t *testing.T) {
 	now := pollFixedTime()
 	clk := testsupport.FixedClock(now)
@@ -122,7 +124,7 @@ func TestItemsSinceUntilWindow(t *testing.T) {
 	url := "https://x.example/feed.xml"
 	seedItem(t, st, url, "old", "old", now.Add(-10*24*time.Hour), now.Add(-10*24*time.Hour))
 	seedItem(t, st, url, "recent", "recent", now.Add(-24*time.Hour), now.Add(-24*time.Hour))
-	// null published_at, fetched recently: must be included via coalesce.
+	// null published_at, fetched recently: must be excluded on the publication axis.
 	seedItem(t, st, url, "nopub", "nopub", time.Time{}, now.Add(-12*time.Hour))
 
 	res := runItems(t, st, clk, "--since", "7d")
@@ -137,8 +139,11 @@ func TestItemsSinceUntilWindow(t *testing.T) {
 	if got["old"] {
 		t.Errorf("--since 7d should exclude the 10-day-old item; got %q", res.out)
 	}
-	if !got["recent"] || !got["nopub"] {
-		t.Errorf("--since 7d should include recent and null-published items; got %q", res.out)
+	if !got["recent"] {
+		t.Errorf("--since 7d should include the recent dated item; got %q", res.out)
+	}
+	if got["nopub"] {
+		t.Errorf("publication-axis --since 7d should exclude the null-published item; got %q", res.out)
 	}
 
 	// --until excludes the recent item, keeps the old one.
@@ -320,6 +325,105 @@ func TestItemsFieldsUnknownRejected(t *testing.T) {
 	}
 }
 
+// TestItemsFieldsFeedURLNoOp covers that naming feed_url in --fields is accepted
+// as a no-op (not an unknown-field error): feed_url is the always-on identity
+// field and is emitted regardless, so listing it changes nothing (fee-n4p6).
+func TestItemsFieldsFeedURLNoOp(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+
+	cases := []struct {
+		name string
+		arg  string
+		want map[string]bool
+	}{
+		{"feed_url alone", "feed_url", map[string]bool{"feed_url": true}},
+		{"with others", "title,link,feed_url", map[string]bool{"feed_url": true, "title": true, "link": true}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testsupport.NewInMemoryStore(clk)
+			url := "https://x.example/feed.xml"
+			seedItem(t, st, url, "k", "titled", now.Add(-time.Hour), now)
+
+			res := runItems(t, st, clk, "--fields", tc.arg)
+			if res.exited {
+				t.Fatalf("--fields %q should exit 0, got code %d (stderr=%q)", tc.arg, res.code, res.err)
+			}
+			rows := itemKeys(t, res.out)
+			if len(rows) != 1 {
+				t.Fatalf("len(items) = %d, want 1\ngot: %q", len(rows), res.out)
+			}
+			gotKeys := map[string]bool{}
+			for k := range rows[0] {
+				gotKeys[k] = true
+			}
+			if len(gotKeys) != len(tc.want) {
+				t.Fatalf("--fields %q keys = %v, want exactly %v", tc.arg, gotKeys, tc.want)
+			}
+			for k := range tc.want {
+				if !gotKeys[k] {
+					t.Errorf("--fields %q missing key %q; got %v", tc.arg, k, gotKeys)
+				}
+			}
+		})
+	}
+}
+
+// TestItemsFieldsDidYouMean covers that a close typo in --fields still exits 1
+// with empty stdout, but the usage error carries a did-you-mean suggestion;
+// a name with no close match exits 1 with no suggestion (fee-n4p6).
+func TestItemsFieldsDidYouMean(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+
+	cases := []struct {
+		name      string
+		arg       string
+		wantInErr string
+		notInErr  string
+	}{
+		{"typo suggests", "tilte", `did you mean "title"?`, ""},
+		{"typo within list suggests", "title,athor", `did you mean "author"?`, ""},
+		{"no close match no suggestion", "zzzzzz", `unknown field "zzzzzz"`, "did you mean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := testsupport.NewInMemoryStore(clk)
+			res := runItems(t, st, clk, "--fields", tc.arg)
+			if !res.exited || res.code != 1 {
+				t.Fatalf("--fields %q should exit 1, got exited=%v code=%d", tc.arg, res.exited, res.code)
+			}
+			if res.out != "" {
+				t.Errorf("--fields %q stdout should be empty on usage error, got %q", tc.arg, res.out)
+			}
+			msg := errorMessage(t, res.err)
+			if !strings.Contains(msg, tc.wantInErr) {
+				t.Errorf("--fields %q error message = %q, want it to contain %q", tc.arg, msg, tc.wantInErr)
+			}
+			if tc.notInErr != "" && strings.Contains(msg, tc.notInErr) {
+				t.Errorf("--fields %q error message = %q, should not contain %q", tc.arg, msg, tc.notInErr)
+			}
+		})
+	}
+}
+
+// errorMessage decodes the structured stderr error object and returns its
+// message, so assertions compare the human-readable text rather than its
+// JSON-escaped form.
+func errorMessage(t *testing.T, stderr string) string {
+	t.Helper()
+	var env struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(stderr), &env); err != nil {
+		t.Fatalf("stderr is not a structured error object: %v\ngot: %q", err, stderr)
+	}
+	return env.Error.Message
+}
+
 // TestItemsNoFieldsFullItem covers that omitting --fields returns the full
 // normalized item, preserving the documented null published_at.
 func TestItemsNoFieldsFullItem(t *testing.T) {
@@ -361,6 +465,266 @@ func TestItemsInvalidOrder(t *testing.T) {
 	if res.out != "" {
 		t.Errorf("stdout should be empty on usage error, got %q", res.out)
 	}
+}
+
+// TestItemsFetchedAtSelectable covers behavior: fetched_at is a selectable field
+// returning feed_url + fetched_at, and is present (never null) on the default
+// full item.
+func TestItemsFetchedAtSelectable(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "k", "titled", now.Add(-time.Hour), now.Add(-30*time.Minute))
+
+	res := runItems(t, st, clk, "--fields", "fetched_at")
+	if res.exited {
+		t.Errorf("items --fields fetched_at should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	rows := itemKeys(t, res.out)
+	if len(rows) != 1 {
+		t.Fatalf("len(items) = %d, want 1\ngot: %q", len(rows), res.out)
+	}
+	gotKeys := map[string]bool{}
+	for k := range rows[0] {
+		gotKeys[k] = true
+	}
+	want := map[string]bool{"feed_url": true, "fetched_at": true}
+	if len(gotKeys) != len(want) {
+		t.Fatalf("--fields fetched_at keys = %v, want exactly %v\ngot: %q", gotKeys, want, res.out)
+	}
+	if string(rows[0]["fetched_at"]) == "null" {
+		t.Errorf("fetched_at must never be null; got %s", rows[0]["fetched_at"])
+	}
+
+	// Default (unprojected) output always carries fetched_at.
+	res = runItems(t, st, clk)
+	rows = itemKeys(t, res.out)
+	if len(rows) != 1 {
+		t.Fatalf("len(items) = %d, want 1\ngot: %q", len(rows), res.out)
+	}
+	if _, ok := rows[0]["fetched_at"]; !ok {
+		t.Errorf("default item output should include fetched_at; got %q", res.out)
+	}
+}
+
+// TestItemsTimeFieldAxis covers behavior: --time-field selects the axis for
+// --since/--until. An item published long ago but fetched recently is excluded
+// on the default publication axis and included on the fetch axis.
+func TestItemsTimeFieldAxis(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	// Published 10 days ago, but only fetched 1 day ago.
+	seedItem(t, st, url, "late", "late arrival", now.Add(-10*24*time.Hour), now.Add(-24*time.Hour))
+
+	// Default publication axis: --since 7d excludes it (published 10d ago).
+	res := runItems(t, st, clk, "--since", "7d")
+	if res.exited {
+		t.Errorf("items --since should exit 0, got code %d", res.code)
+	}
+	if env := parseItemsEnvelope(t, res.out); len(env.Items) != 0 {
+		t.Errorf("publication axis --since 7d should exclude the late item; got %q", res.out)
+	}
+
+	// Fetch axis: --since 7d includes it (fetched 1d ago).
+	res = runItems(t, st, clk, "--since", "7d", "--time-field", "fetched")
+	if res.exited {
+		t.Errorf("items --time-field fetched should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	if env := parseItemsEnvelope(t, res.out); len(env.Items) != 1 {
+		t.Errorf("fetch axis --since 7d should include the late item; got %q", res.out)
+	}
+}
+
+// TestItemsTimeFieldInvalid covers the usage error: an unrecognized --time-field
+// value is a whole-invocation usage failure (exit 1) with empty stdout.
+func TestItemsTimeFieldInvalid(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	res := runItems(t, st, clk, "--time-field", "sideways")
+	if !res.exited || res.code != 1 {
+		t.Errorf("invalid --time-field should exit 1, got exited=%v code=%d", res.exited, res.code)
+	}
+	if res.out != "" {
+		t.Errorf("stdout should be empty on usage error, got %q", res.out)
+	}
+}
+
+// TestItemsTimeFieldOrderIndependent covers that --order is independent of
+// --time-field: windowing on the fetch axis while sorting by publication time.
+func TestItemsTimeFieldOrderIndependent(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	// Both fetched within the window; published in reverse fetch order.
+	seedItem(t, st, url, "a", "older pub", now.Add(-3*24*time.Hour), now.Add(-2*time.Hour))
+	seedItem(t, st, url, "b", "newer pub", now.Add(-1*24*time.Hour), now.Add(-1*time.Hour))
+
+	res := runItems(t, st, clk, "--since", "7d", "--time-field", "fetched", "--order", "published asc")
+	if res.exited {
+		t.Errorf("items should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	env := parseItemsEnvelope(t, res.out)
+	if len(env.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2\ngot: %q", len(env.Items), res.out)
+	}
+	if env.Items[0].Title != "older pub" {
+		t.Errorf("--order published asc should lead with %q; got %q", "older pub", res.out)
+	}
+}
+
+// omittedEnvelope decodes the items envelope's omitted_no_date field, using a
+// pointer so an absent field (omitempty) is distinguishable from an explicit 0.
+type omittedEnvelope struct {
+	OmittedNoDate *int `json:"omitted_no_date"`
+}
+
+func parseOmitted(t *testing.T, out string) *int {
+	t.Helper()
+	var env omittedEnvelope
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatalf("stdout is not an items envelope: %v\ngot: %q", err, out)
+	}
+	return env.OmittedNoDate
+}
+
+// TestItemsOmittedNoDateReported covers Req 3: a publication-axis date window
+// that drops null-publication items reports the count as omitted_no_date and
+// emits one info stderr line naming the count and axis.
+func TestItemsOmittedNoDateReported(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "dated", "dated", now.Add(-24*time.Hour), now.Add(-24*time.Hour))
+	seedItem(t, st, url, "nopub1", "nopub1", time.Time{}, now.Add(-12*time.Hour))
+	seedItem(t, st, url, "nopub2", "nopub2", time.Time{}, now.Add(-6*time.Hour))
+
+	res := runItems(t, st, clk, "--since", "7d")
+	if res.exited {
+		t.Fatalf("items --since should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+
+	env := parseItemsEnvelope(t, res.out)
+	if len(env.Items) != 1 || env.Items[0].Title != "dated" {
+		t.Errorf("--since 7d should return only the dated item; got %q", res.out)
+	}
+	got := parseOmitted(t, res.out)
+	if got == nil || *got != 2 {
+		t.Errorf("omitted_no_date = %v, want 2\ngot: %q", got, res.out)
+	}
+
+	logged := decodeLogLine(t, res.err, "excluded items with no publication date")
+	if logged["count"] != float64(2) {
+		t.Errorf("log count = %v, want 2 (stderr=%q)", logged["count"], res.err)
+	}
+	if logged["axis"] != "published" {
+		t.Errorf("log axis = %v, want published (stderr=%q)", logged["axis"], res.err)
+	}
+}
+
+// TestItemsOmittedNoDateAbsentWhenNoneDropped covers that omitted_no_date is
+// absent (omitempty) and no info line is emitted when the publication-axis window
+// drops nothing.
+func TestItemsOmittedNoDateAbsentWhenNoneDropped(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "dated", "dated", now.Add(-24*time.Hour), now.Add(-24*time.Hour))
+
+	res := runItems(t, st, clk, "--since", "7d")
+	if res.exited {
+		t.Fatalf("items --since should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	if got := parseOmitted(t, res.out); got != nil {
+		t.Errorf("omitted_no_date should be absent when nothing dropped; got %v\nout: %q", *got, res.out)
+	}
+	if strings.Contains(res.err, "excluded items with no publication date") {
+		t.Errorf("no info line should be emitted when nothing dropped; stderr=%q", res.err)
+	}
+}
+
+// TestItemsOmittedNoDateFetchAxisUnaffected covers that the fetch axis never
+// reports omitted_no_date: fetched_at is never null, so dateless items match.
+func TestItemsOmittedNoDateFetchAxisUnaffected(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "nopub", "nopub", time.Time{}, now.Add(-12*time.Hour))
+
+	res := runItems(t, st, clk, "--since", "7d", "--time-field", "fetched")
+	if res.exited {
+		t.Fatalf("items fetch axis should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	env := parseItemsEnvelope(t, res.out)
+	if len(env.Items) != 1 {
+		t.Errorf("fetch axis --since 7d should include the dateless item; got %q", res.out)
+	}
+	if got := parseOmitted(t, res.out); got != nil {
+		t.Errorf("fetch axis should never report omitted_no_date; got %v", *got)
+	}
+}
+
+// TestItemsNullOrderingHonest covers Req 3 ordering: a null-publication item
+// sorts last under publication desc and first under publication asc, with no
+// fetch-time substitution.
+func TestItemsNullOrderingHonest(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "dated", "dated", now.Add(-48*time.Hour), now.Add(-48*time.Hour))
+	// Dateless but fetched most recently: must not lead under publication desc.
+	seedItem(t, st, url, "nopub", "nopub", time.Time{}, now.Add(-1*time.Hour))
+
+	res := runItems(t, st, clk, "--order", "published desc")
+	if res.exited {
+		t.Fatalf("items should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	env := parseItemsEnvelope(t, res.out)
+	if len(env.Items) != 2 || env.Items[0].Title != "dated" || env.Items[1].Title != "nopub" {
+		t.Errorf("publication desc should place dateless item last; got %q", res.out)
+	}
+
+	res = runItems(t, st, clk, "--order", "published asc")
+	env = parseItemsEnvelope(t, res.out)
+	if len(env.Items) != 2 || env.Items[0].Title != "nopub" || env.Items[1].Title != "dated" {
+		t.Errorf("publication asc should place dateless item first; got %q", res.out)
+	}
+}
+
+// decodeLogLine finds the JSON slog line on stderr whose msg matches want and
+// returns it as a decoded map, failing the test if no such line is present.
+func decodeLogLine(t *testing.T, stderr, want string) map[string]any {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(stderr), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		if m["msg"] == want {
+			return m
+		}
+	}
+	t.Fatalf("no stderr log line with msg %q; got: %q", want, stderr)
+	return nil
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }

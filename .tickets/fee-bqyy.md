@@ -1,6 +1,6 @@
 ---
 id: fee-bqyy
-status: open
+status: closed
 deps: [fee-e1s2, fee-ah78, fee-aag4, fee-7dsa, fee-n4p6, fee-9otc]
 links: []
 created: 2026-06-30T22:54:34Z
@@ -67,3 +67,9 @@ Two short dependency chains reflect real implementation ordering on shared code
   change.
 - A learnings entry per child under
   [learnings.md](../docs/specs/001-initial-implementation/learnings.md).
+
+## Notes
+
+**2026-07-01T00:05:10Z**
+
+Closed E10 (002-beta) epic. All six children (fee-e1s2, fee-ah78, fee-aag4, fee-7dsa, fee-n4p6, fee-9otc) closed with make build green. Verified DoD: (1) all children closed; (2) each child's notes confirm docs/usage.md and feedwatch schema were updated for its contract change (schema_test.go pins + auto-reflection assert this, part of the green gate); (3) a learnings entry exists per child in docs/specs/001-initial-implementation/learnings.md (lines 1663-1822). No further implementation needed — epic was a container. Full quality gate (fmt-check, vet, lint, test, compile) passes.

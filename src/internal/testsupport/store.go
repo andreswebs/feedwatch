@@ -202,13 +202,14 @@ func (s *InMemoryStore) SetValidators(_ context.Context, url, etag, lastModified
 
 // RecordSuccess clears failure state and schedules the next poll. A non-empty
 // finalURL distinct from url renames the feed (and its items) to the
-// permanent-redirect target, unless that target is already subscribed.
-func (s *InMemoryStore) RecordSuccess(_ context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) error {
+// permanent-redirect target, unless that target is already subscribed. It
+// returns the new canonical URL when a rename was applied, else "".
+func (s *InMemoryStore) RecordSuccess(_ context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, ok := s.feeds[url]
 	if !ok {
-		return nil
+		return "", nil
 	}
 	f.FailureCount = 0
 	f.LastError = ""
@@ -241,7 +242,10 @@ func (s *InMemoryStore) RecordSuccess(_ context.Context, url string, fetchedAt, 
 		}
 	}
 	s.feeds[target] = f
-	return nil
+	if target != url {
+		return target, nil
+	}
+	return "", nil
 }
 
 // RecordFailure increments failure state and schedules a backed-off retry.
@@ -301,14 +305,18 @@ func (s *InMemoryStore) UpsertItems(_ context.Context, feedURL string, items []c
 }
 
 // QueryItems returns stored, non-tombstoned items matching the query, honoring
-// since/until/contains filters, ordering, pagination, and field projection.
-func (s *InMemoryStore) QueryItems(_ context.Context, q core.ItemQuery) ([]core.Item, error) {
+// since/until/contains filters, ordering, pagination, and field projection. It
+// also reports how many items a publication-axis date window excluded solely for
+// having a null publication time.
+func (s *InMemoryStore) QueryItems(_ context.Context, q core.ItemQuery) (core.ItemQueryResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	feedFilter := s.feedURLSetLocked(q.Feeds)
+	pubWindow := q.TimeField != "fetched" && (q.Since != nil || q.Until != nil)
 
 	var out []core.Item
+	omitted := 0
 	for url, byKey := range s.items {
 		if feedFilter != nil && !feedFilter[url] {
 			continue
@@ -317,7 +325,14 @@ func (s *InMemoryStore) QueryItems(_ context.Context, q core.ItemQuery) ([]core.
 			if s.tombstones[url][key] {
 				continue
 			}
-			if !matchesItemFilters(it, q) {
+			if !matchesNonDateFilters(it, q) {
+				continue
+			}
+			if pubWindow && it.PublishedAt == nil {
+				omitted++ // dateless item dropped from a publication-axis window
+				continue
+			}
+			if !matchesDateFilter(it, q) {
 				continue
 			}
 			out = append(out, it)
@@ -331,7 +346,7 @@ func (s *InMemoryStore) QueryItems(_ context.Context, q core.ItemQuery) ([]core.
 			out[i] = project(out[i], q.Fields)
 		}
 	}
-	return out, nil
+	return core.ItemQueryResult{Items: out, OmittedNoDate: omitted}, nil
 }
 
 // feedURLSetLocked resolves a list of url-or-alias references to a set of
@@ -438,16 +453,9 @@ func coalesce(it core.Item) time.Time {
 	return it.FetchedAt
 }
 
-// matchesItemFilters reports whether an item satisfies the query's date and
-// substring filters.
-func matchesItemFilters(it core.Item, q core.ItemQuery) bool {
-	at := coalesce(it)
-	if q.Since != nil && at.Before(*q.Since) {
-		return false
-	}
-	if q.Until != nil && at.After(*q.Until) {
-		return false
-	}
+// matchesNonDateFilters reports whether an item satisfies the query's
+// substring (and any non-date) filters, independent of the date window.
+func matchesNonDateFilters(it core.Item, q core.ItemQuery) bool {
 	if q.Contains != "" {
 		needle := strings.ToLower(q.Contains)
 		hay := strings.ToLower(it.Title + "\x00" + it.ContentText + "\x00" + it.ContentHTML)
@@ -458,27 +466,75 @@ func matchesItemFilters(it core.Item, q core.ItemQuery) bool {
 	return true
 }
 
+// matchesDateFilter reports whether an item falls within the query's
+// since/until window on the selected axis. With no window every item matches.
+// On the publication axis a null-publication item inside an active window is
+// already excluded and counted by the caller, so it is rejected here too.
+func matchesDateFilter(it core.Item, q core.ItemQuery) bool {
+	if q.Since == nil && q.Until == nil {
+		return true
+	}
+	at := it.FetchedAt
+	if q.TimeField != "fetched" {
+		if it.PublishedAt == nil {
+			return false
+		}
+		at = *it.PublishedAt
+	}
+	if q.Since != nil && at.Before(*q.Since) {
+		return false
+	}
+	if q.Until != nil && at.After(*q.Until) {
+		return false
+	}
+	return true
+}
+
 // sortItems orders items by the query's field and direction, breaking ties on
-// the dedup key, mirroring the SQLite ORDER BY.
+// the dedup key, mirroring the SQLite ORDER BY. On the publication axis an item
+// with a null publication time sorts last under descending order and first under
+// ascending order, matching SQLite's NULL-below-any-value ordering.
 func sortItems(items []core.Item, o core.ItemOrder) {
 	sort.SliceStable(items, func(i, j int) bool {
-		var ti, tj time.Time
 		if o.Field == "fetched" {
-			ti, tj = items[i].FetchedAt, items[j].FetchedAt
-		} else {
-			ti, tj = coalesce(items[i]), coalesce(items[j])
+			return lessByTime(items[i].FetchedAt, items[j].FetchedAt,
+				items[i].DedupKey, items[j].DedupKey, o.Desc)
 		}
-		if !ti.Equal(tj) {
-			if o.Desc {
-				return ti.After(tj)
-			}
-			return ti.Before(tj)
-		}
-		if o.Desc {
-			return items[i].DedupKey > items[j].DedupKey
-		}
-		return items[i].DedupKey < items[j].DedupKey
+		return lessByPublished(items[i], items[j], o.Desc)
 	})
+}
+
+// lessByPublished orders two items on the publication axis, treating a null
+// publication time as smaller than any value (last under desc, first under asc).
+func lessByPublished(a, b core.Item, desc bool) bool {
+	an, bn := a.PublishedAt == nil, b.PublishedAt == nil
+	if an || bn {
+		if an != bn {
+			// Null sorts smaller: under desc the non-null wins, under asc the null does.
+			return an != desc
+		}
+		return tieByKey(a.DedupKey, b.DedupKey, desc) // both null: order by key
+	}
+	return lessByTime(*a.PublishedAt, *b.PublishedAt, a.DedupKey, b.DedupKey, desc)
+}
+
+// lessByTime orders by time with a dedup-key tiebreak, in the given direction.
+func lessByTime(ti, tj time.Time, ki, kj string, desc bool) bool {
+	if !ti.Equal(tj) {
+		if desc {
+			return ti.After(tj)
+		}
+		return ti.Before(tj)
+	}
+	return tieByKey(ki, kj, desc)
+}
+
+// tieByKey breaks an ordering tie on the dedup key, in the given direction.
+func tieByKey(ki, kj string, desc bool) bool {
+	if desc {
+		return ki > kj
+	}
+	return ki < kj
 }
 
 // paginate applies limit and offset to an ordered slice.
@@ -501,7 +557,7 @@ var projectedFields = map[string]bool{
 	"id": true, "title": true, "link": true, "summary": true,
 	"content_html": true, "content_text": true, "content_mime_type": true,
 	"base_url": true, "author": true, "categories": true, "enclosures": true,
-	"published_at": true, "updated_at": true,
+	"published_at": true, "updated_at": true, "fetched_at": true,
 }
 
 // project returns a copy of it carrying only the always-retained identity and

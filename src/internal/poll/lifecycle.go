@@ -14,8 +14,9 @@ import (
 // orchestrator's concern, applied before it picks the interval passed here.
 //
 // finalURL is the permanent-redirect rewrite target, or "" when the feed URL is
-// unchanged; the store applies the rename atomically with the success write.
-func RecordSuccess(ctx context.Context, s store.Store, clk core.Clock, url string, interval, def time.Duration, finalURL string) error {
+// unchanged; the store applies the rename atomically with the success write. It
+// returns the new canonical URL when a rename was applied, else "".
+func RecordSuccess(ctx context.Context, s store.Store, clk core.Clock, url string, interval, def time.Duration, finalURL string) (string, error) {
 	now := clk()
 	eff := interval
 	if eff <= 0 {

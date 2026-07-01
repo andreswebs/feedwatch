@@ -34,9 +34,9 @@ func (s ctxCheckStore) UpsertItems(ctx context.Context, feedURL string, items []
 	return s.InMemoryStore.UpsertItems(ctx, feedURL, items)
 }
 
-func (s ctxCheckStore) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) error {
+func (s ctxCheckStore) RecordSuccess(ctx context.Context, url string, fetchedAt, nextDue time.Time, finalURL string) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return "", err
 	}
 	return s.InMemoryStore.RecordSuccess(ctx, url, fetchedAt, nextDue, finalURL)
 }
@@ -130,8 +130,8 @@ func TestRunInterruptPersistsCompletedFeeds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
-	if len(items) != 1 || items[0].Title != "a1" {
-		t.Fatalf("completed feed not persisted: %v", items)
+	if len(items.Items) != 1 || items.Items[0].Title != "a1" {
+		t.Fatalf("completed feed not persisted: %v", items.Items)
 	}
 
 	if got.result.NewItems != 1 {

@@ -1,6 +1,6 @@
 ---
 id: fee-ah78
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-06-30T22:54:52Z
@@ -154,3 +154,9 @@ choice through the query.
 - Field notes: [usage-learnings.md](../docs/specs/002-beta/usage-learnings.md),
   "Null dates silently coalesce into recent windows".
 - Blocks: `fee-aag4` (Req 3) and `fee-n4p6` (Req 5) depend on this ticket.
+
+## Notes
+
+**2026-06-30T23:27:57Z**
+
+Implemented Req 2: exposed Item.FetchedAt as json:"fetched_at" (selectable via --fields, present on every item, never null) and added --time-field published|fetched (default published) selecting the --since/--until axis, independent of --order. Changes: core/types.go (tag), core/query.go (ValidItemFields+ProjectItem+ItemQuery.TimeField), cli/items.go (flag+validation, usage err on bad value), store/sqlite/items.go (axis switch in itemFilters; fieldColumns), testsupport/store.go (matchesItemFilters axis + projectedFields). FIXED a surfaced SQLite/double parity bug: SQLite UpsertItems did not write the resolved fetch time back into returned items, so poll reported fetched_at as Go zero time; now resolved once at the UpsertItems entry point (regression test TestUpsertItemsResolvesFetchedAt). Also corrected pre-existing stale e2e poll goldens (missing succeeded/failed/failures from fee-e1s2; suite was green only via test cache) and added a reFetchedAt normalizer to the e2e harness for the volatile timestamp. Tests added in core/cli/sqlite/testsupport; usage.md updated; learnings appended. make build green. Unblocks fee-aag4 and fee-n4p6.

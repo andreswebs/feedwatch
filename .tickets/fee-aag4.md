@@ -1,6 +1,6 @@
 ---
 id: fee-aag4
-status: open
+status: closed
 deps: [fee-ah78]
 links: []
 created: 2026-06-30T22:54:52Z
@@ -191,3 +191,9 @@ stops coalescing, and the query reports what it dropped.
 - Field notes: [usage-learnings.md](../docs/specs/002-beta/usage-learnings.md),
   "published_at can be null" and "Null dates silently coalesce".
 - Depends on: `fee-ah78` (Req 2, the fetch-time axis).
+
+## Notes
+
+**2026-06-30T23:54:08Z**
+
+Implemented Req 3 (honest null publication dates). Breaking change: publication-axis --since/--until no longer coalesce a null published_at to fetched_at; dateless items are excluded from publication windows, ordered last (desc)/first (asc), and the dropped count is surfaced as omitted_no_date in the items envelope plus an INFO stderr line (count, axis=published). Fetch axis unchanged. Store change: QueryItems now returns core.ItemQueryResult{Items, OmittedNoDate}; nonDateFilters factored out of itemFilters so the row query and COUNT(*) share predicates. SQLite relies on native NULL-low ordering; noted Postgres will need explicit NULLS LAST/FIRST. Mirrored in the in-memory double. Docs (usage.md, 001 Req 13) and schema (omitted_no_date, omitempty) updated. make build green.

@@ -327,3 +327,75 @@ func TestRunForceRepollSurfacesNothingNew(t *testing.T) {
 		t.Fatalf("second poll = %+v, want polled=1 new=0 (dedup)", second)
 	}
 }
+
+// Run surfaces a permanent-redirect rename in the result: a 301/308 to a fresh
+// URL yields a {from,to} entry; a redirect whose target is already subscribed is
+// declined and yields none; and a poll with no rename yields an empty slice.
+func TestRunReportsPermanentRedirectRename(t *testing.T) {
+	const oldURL = "https://aihero.dev/rss.xml"
+	const newURL = "https://www.aihero.dev/rss.xml"
+
+	t.Run("fresh target reports rename", func(t *testing.T) {
+		clk := testsupport.FixedClock(fixedTime())
+		s := testsupport.NewInMemoryStore(clk)
+		seedFeed(t, s, oldURL, fixedTime().Add(-time.Hour))
+
+		f := testsupport.NewFakeFetcher()
+		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: true,
+			Body: []byte("body"), MIMEType: "application/rss+xml"})
+		p := testsupport.NewFakeParser()
+		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(result.Renamed) != 1 {
+			t.Fatalf("Renamed = %+v, want one entry", result.Renamed)
+		}
+		if result.Renamed[0] != (core.FeedRename{From: oldURL, To: newURL}) {
+			t.Errorf("Renamed[0] = %+v, want {from:%q to:%q}", result.Renamed[0], oldURL, newURL)
+		}
+	})
+
+	t.Run("declined when target already subscribed", func(t *testing.T) {
+		clk := testsupport.FixedClock(fixedTime())
+		s := testsupport.NewInMemoryStore(clk)
+		seedFeed(t, s, oldURL, fixedTime().Add(-time.Hour))
+		seedFeed(t, s, newURL, fixedTime().Add(time.Hour)) // already subscribed, not due
+
+		f := testsupport.NewFakeFetcher()
+		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: true,
+			Body: []byte("body"), MIMEType: "application/rss+xml"})
+		p := testsupport.NewFakeParser()
+		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{oldURL}, false)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(result.Renamed) != 0 {
+			t.Fatalf("Renamed = %+v, want none (rename declined)", result.Renamed)
+		}
+	})
+
+	t.Run("temporary redirect reports no rename", func(t *testing.T) {
+		clk := testsupport.FixedClock(fixedTime())
+		s := testsupport.NewInMemoryStore(clk)
+		seedFeed(t, s, oldURL, fixedTime().Add(-time.Hour))
+
+		f := testsupport.NewFakeFetcher()
+		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: false,
+			Body: []byte("body"), MIMEType: "application/rss+xml"})
+		p := testsupport.NewFakeParser()
+		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if len(result.Renamed) != 0 {
+			t.Fatalf("Renamed = %+v, want none (temporary redirect)", result.Renamed)
+		}
+	})
+}

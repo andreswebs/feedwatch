@@ -40,15 +40,19 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
   keeps stdout clean, so piping it into `jq` never trips over a diagnostic.
 - A hard, whole-invocation failure (bad arguments, unreachable store) writes a
   single JSON error object to stderr and nothing to stdout.
-- Per-feed failures during a poll are reported as structured objects on stderr
-  with the feed URL, an error `category` (`network`, `http`, `parse`,
-  `timeout`), an optional HTTP `status`, and a message. The stdout envelope
-  reports outcome counts; stderr reports which feeds failed and why.
+- Per-feed failures during a poll are reported on both streams. The stdout
+  envelope carries `succeeded` and `failed` counts and a `failures` list whose
+  entries hold the feed URL, an error `category` (`network`, `http`, `parse`,
+  `timeout`), and an HTTP `status` (present only for `http` failures, omitted
+  otherwise), so a partial failure is triageable from stdout alone. stderr adds
+  the full per-feed detail, including the human-readable message.
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
-# stdout: {"polled":3,"skipped":0,"new_items":2,"items":[...]}
-# err.json: {"errors":[{"feed_url":"...","category":"http","status":404}]}
+# stdout: {"polled":3,"succeeded":2,"failed":1,"skipped":0,"new_items":2,
+#          "items":[...],"failures":[{"feed_url":"...","category":"http","status":404}]}
+# err.json: {"errors":[{"feed_url":"...","category":"http","status":404,
+#                       "message":"server returned HTTP 404"}]}
 # exit=3
 ```
 
@@ -162,15 +166,21 @@ second immediate poll returns an empty set. Conditional GET (`If-None-Match` and
 `If-Modified-Since`) is always sent, and parsing is skipped on `304 Not
 Modified`.
 
+The envelope reports the per-feed outcome: `polled` feeds attempted (with the
+invariant `polled == succeeded + failed`), `skipped` feeds left unpolled because
+they were not due, `new_items`, the `items` themselves, and a `failures` list
+(always present, empty when no feed failed) with one `{feed_url, category,
+status?}` entry per failed feed.
+
 Options:
 
 - `--force`, `--all` - poll every active feed, ignoring the schedule.
 
 ```sh
 feedwatch poll          # only due feeds
-# {"polled":2,"skipped":1,"new_items":4,"items":[...]}
+# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"new_items":4,"items":[...],"failures":[]}
 feedwatch poll          # immediately again
-# {"polled":0,"skipped":3,"new_items":0,"items":[]}
+# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"new_items":0,"items":[],"failures":[]}
 ```
 
 ### `items`
@@ -183,6 +193,13 @@ Options:
 - `--feed <url|alias>` - feed to query (repeatable); all feeds when omitted.
 - `--since <when>`, `--until <when>` - time bounds, RFC3339 or relative such as
   `24h` or `7d`.
+- `--time-field <published|fetched>` - which time the `--since`/`--until` window
+  filters on (default `published`). `published` filters on the publication time,
+  excluding items whose `published_at` is null (the fetch time is never
+  substituted); `fetched` filters on the always-present fetch time, which is the
+  reliable axis for "what newly arrived" when a feed omits or mis-formats
+  publication dates. Independent of `--order`: you can window on one axis and
+  sort by the other.
 - `--limit <int>` - maximum items to return; `0` returns all.
 - `--offset <int>` - items to skip before returning results.
 - `--order <spec>` - sort: `published|fetched` and `asc|desc` (default
@@ -191,14 +208,18 @@ Options:
 - `--fields <list>` - project to a subset of item fields (repeatable or
   comma-separated). Valid fields: `id`, `title`, `link`, `summary`,
   `content_html`, `content_text`, `content_mime_type`, `base_url`, `author`,
-  `categories`, `enclosures`, `published_at`, `updated_at`. The result carries
-  exactly the requested fields plus the always-on `feed_url` identity field; an
-  unknown field name is a usage error (exit 1).
+  `categories`, `enclosures`, `published_at`, `updated_at`, `fetched_at`. The
+  result carries exactly the requested fields plus the always-on `feed_url`
+  identity field. Naming `feed_url` itself is accepted as a no-op, since it is
+  emitted regardless. An unknown field name is a usage error (exit 1) that
+  returns no partial results; when it closely resembles a valid field, the error
+  includes a did-you-mean suggestion.
 
 ```sh
 feedwatch items --feed godev --since 7d --limit 50
 feedwatch items --contains release --order published desc
-feedwatch items --feed godev --fields title,link,published_at
+feedwatch items --since 7d --time-field fetched --order fetched desc
+feedwatch items --feed godev --fields title,link,published_at,fetched_at
 ```
 
 Each normalized item has this shape (optional fields are omitted when empty):
@@ -218,13 +239,21 @@ Each normalized item has this shape (optional fields are omitted when empty):
   "categories": ["go"],
   "enclosures": [{ "url": "...", "type": "audio/mpeg", "length": 5768960 }],
   "published_at": "2026-06-27T10:00:00Z",
-  "updated_at": "2026-06-27T10:00:00Z"
+  "updated_at": "2026-06-27T10:00:00Z",
+  "fetched_at": "2026-06-27T10:05:00Z"
 }
 ```
 
-All dates are normalized to RFC3339 UTC. A date that cannot be parsed is stored
-as null; for ordering and date filters a null `published_at` coalesces to the
-fetch time.
+All dates are normalized to RFC3339 UTC. The publication time `published_at` is
+what the feed declares; a date that cannot be parsed is stored as null and is
+never fabricated. On the publication axis a null `published_at` is excluded from
+`--since`/`--until` windows (it is not coalesced to the fetch time), and it is
+ordered last under `desc` and first under `asc`. When such a window drops one or
+more dateless items, the result envelope reports the count as `omitted_no_date`
+(absent when zero) and an informational line is logged to stderr. The fetch time
+`fetched_at` is the moment feedwatch first recorded the item; it is always
+present (never null) and is the reliable freshness signal selected by
+`--time-field fetched`, which this exclusion never affects.
 
 ### `prune`
 
@@ -272,16 +301,25 @@ feedwatch enable https://flaky.example/feed.xml
 
 `import` reads an OPML outline from a file or stdin (`-`), walks it recursively,
 adds each feed, uses `text` or `title` as the alias when one is free, and reports
-per-entry results without failing the whole import on one bad entry. `export`
-writes the current subscriptions and aliases as valid OPML 2.0.
+per-entry results without failing the whole import on one bad entry. By default
+it validates each feed the way `add` does, fetching and parsing it before
+subscribing, so a reported `added` count means those feeds actually resolve and
+parse; validation runs concurrently under `--concurrency` with the same
+transient-retry policy as other fetches, and a feed that fails to fetch or parse
+is recorded in `failed` rather than subscribed. `export` writes the current
+subscriptions and aliases as valid OPML 2.0.
 
 Options:
 
+- `--no-validate` - subscribe every syntactically valid feed without fetching
+  it (fast bulk-add). A successful import then does not imply the feeds are
+  reachable.
 - `export -o <file>` - write OPML to this file instead of stdout.
 
 ```sh
 feedwatch import subs.opml
-# {"added":42,"skipped":3,"failed":[{"xmlUrl":"...","reason":"..."}]}
+# {"added":40,"skipped":3,"failed":[{"xmlUrl":"https://dead/feed","reason":"could not fetch ..."}]}
+feedwatch import --no-validate subs.opml   # fast bulk-add, no reachability check
 feedwatch export -o backup.opml
 feedwatch export | curl ...
 ```

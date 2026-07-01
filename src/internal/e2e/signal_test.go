@@ -70,7 +70,10 @@ func pollInterruptScenario(t *testing.T, sig syscall.Signal, wantExit int) {
 	}
 
 	//nolint:gosec // G204: the suite runs the binary it just built with test-controlled args.
-	if out, err := exec.Command(binPath, "--quiet", "--db", db, "import", opmlPath).CombinedOutput(); err != nil {
+	// --no-validate: the slow feed is deliberately unreachable until cancelled,
+	// so both feeds must be subscribed without a reachability fetch for the poll
+	// to have an in-flight feed to interrupt.
+	if out, err := exec.Command(binPath, "--quiet", "--db", db, "import", "--no-validate", opmlPath).CombinedOutput(); err != nil {
 		t.Fatalf("import: %v\n%s", err, out)
 	}
 

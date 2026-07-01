@@ -6,9 +6,12 @@ import (
 	"os"
 
 	cliv3 "github.com/urfave/cli/v3"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/opml"
+	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/store"
 )
 
@@ -36,7 +39,13 @@ func (d Deps) importCommand() *cliv3.Command {
 		Usage:     "add subscriptions from an OPML outline read from a file or stdin",
 		ArgsUsage: "FILE|-",
 		Arguments: []cliv3.Argument{&cliv3.StringArg{Name: "file"}},
-		Action:    d.importAction,
+		Flags: []cliv3.Flag{
+			&cliv3.BoolFlag{
+				Name:  "no-validate",
+				Usage: "subscribe without fetching each feed (fast bulk-add; a successful import does not imply reachability)",
+			},
+		},
+		Action: d.importAction,
 	}
 }
 
@@ -44,8 +53,11 @@ func (d Deps) importCommand() *cliv3.Command {
 // walks its outlines recursively, and adds each feed: falling back xmlUrl to
 // url, using the outline text or title as the alias when free, skipping
 // already-subscribed feeds, and collecting per-entry failures without aborting.
-// A missing or unreadable source, or one that is not valid OPML, is a hard
-// usage failure (exit 1); a store-open failure propagates to the boundary.
+// By default it validates each feed by fetching and parsing it the way add does,
+// so a reported add means the feed actually resolves; --no-validate restores the
+// fast bulk-add that subscribes without fetching. A missing or unreadable source,
+// or one that is not valid OPML, is a hard usage failure (exit 1); a store-open
+// failure propagates to the boundary.
 func (d Deps) importAction(ctx context.Context, cmd *cliv3.Command) error {
 	cfg := configFrom(ctx)
 	r := rendererFrom(ctx)
@@ -72,19 +84,54 @@ func (d Deps) importAction(ctx context.Context, cmd *cliv3.Command) error {
 		return err
 	}
 
-	res, err := importFeeds(ctx, st, feeds, invalid)
+	validate := !cmd.Bool("no-validate")
+	var fetcher fetch.Fetcher
+	var parser parse.Parser
+	if validate {
+		if fetcher, err = rs.Fetcher(); err != nil {
+			return err
+		}
+		parser = rs.Parser()
+	}
+
+	res, err := importFeeds(ctx, st, feeds, invalid, importOpts{
+		validate:    validate,
+		fetcher:     fetcher,
+		parser:      parser,
+		concurrency: cfg.Concurrency,
+	})
 	if err != nil {
 		return err
 	}
 	return r.Result(res)
 }
 
-// importFeeds adds each parsed feed to the store, deduplicating against the
-// existing subscriptions and assigning a free alias from the outline title. It
-// never returns an error for a single bad entry: a store-level add failure is
-// recorded in the result. A failure reading the existing subscriptions is a
-// hard error, since the dedup and alias decisions depend on it.
-func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid []opml.Invalid) (ImportResult, error) {
+// importOpts carries the validation collaborators for importFeeds. When validate
+// is false the fetcher and parser are unused and may be nil.
+type importOpts struct {
+	validate    bool
+	fetcher     fetch.Fetcher
+	parser      parse.Parser
+	concurrency int
+}
+
+// importCandidate is one outline entry that passed dedup and syntax checks and
+// is eligible to subscribe, preserving its outline order.
+type importCandidate struct {
+	url   string
+	title string
+}
+
+// importFeeds adds each parsed feed to the store in three phases so concurrency
+// stays confined to the network step while dedup and alias decisions remain
+// deterministic. Phase 1 classifies each entry sequentially against the existing
+// subscriptions and URL syntax. Phase 2 validates the surviving candidates
+// concurrently (only when opts.validate), one failure never cancelling another.
+// Phase 3 subscribes the candidates that were not validated away, sequentially,
+// so alias assignment is order-stable. It never returns an error for a single bad
+// entry; a failure reading the existing subscriptions is a hard error, since the
+// dedup and alias decisions depend on it.
+func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid []opml.Invalid, opts importOpts) (ImportResult, error) {
 	existing, err := st.ListFeeds(ctx, core.ListFilter{})
 	if err != nil {
 		return ImportResult{}, err
@@ -104,12 +151,12 @@ func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid
 		res.Failed = append(res.Failed, ImportFail{Reason: iv.Reason})
 	}
 
+	candidates := make([]importCandidate, 0, len(feeds))
 	for _, feed := range feeds {
 		if urls[feed.XMLURL] {
 			res.Skipped++
 			continue
 		}
-
 		if !isAbsoluteHTTPURL(feed.XMLURL) {
 			res.Failed = append(res.Failed, ImportFail{
 				XMLURL: feed.XMLURL,
@@ -117,18 +164,28 @@ func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid
 			})
 			continue
 		}
+		urls[feed.XMLURL] = true // reserve so an OPML-internal duplicate is skipped
+		candidates = append(candidates, importCandidate{url: feed.XMLURL, title: feed.Title})
+	}
 
-		alias := ""
-		if feed.Title != "" && !aliases[feed.Title] {
-			alias = feed.Title
-		}
+	validationErrs := validateCandidates(ctx, candidates, opts)
 
-		if _, err := st.AddFeed(ctx, core.Feed{URL: feed.XMLURL, Alias: alias}); err != nil {
-			res.Failed = append(res.Failed, ImportFail{XMLURL: feed.XMLURL, Reason: err.Error()})
+	for i, c := range candidates {
+		if validationErrs != nil && validationErrs[i] != nil {
+			res.Failed = append(res.Failed, ImportFail{XMLURL: c.url, Reason: validationErrs[i].Error()})
 			continue
 		}
 
-		urls[feed.XMLURL] = true
+		alias := ""
+		if c.title != "" && !aliases[c.title] {
+			alias = c.title
+		}
+
+		if _, err := st.AddFeed(ctx, core.Feed{URL: c.url, Alias: alias}); err != nil {
+			res.Failed = append(res.Failed, ImportFail{XMLURL: c.url, Reason: err.Error()})
+			continue
+		}
+
 		if alias != "" {
 			aliases[alias] = true
 		}
@@ -136,6 +193,29 @@ func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid
 	}
 
 	return res, nil
+}
+
+// validateCandidates fetches and parses each candidate concurrently, returning a
+// position-indexed slice whose entry is non-nil when that candidate failed
+// validation. It returns nil when validation is disabled, so callers treat every
+// candidate as valid without allocating. Each worker returns nil even on a
+// validation failure, so one bad feed never cancels the group.
+func validateCandidates(ctx context.Context, candidates []importCandidate, opts importOpts) []error {
+	if !opts.validate || len(candidates) == 0 {
+		return nil
+	}
+
+	errs := make([]error, len(candidates))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(opts.concurrency)
+	for i, c := range candidates {
+		g.Go(func() error {
+			errs[i] = validateParsesAsFeed(gctx, opts.fetcher, opts.parser, c.url)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return errs
 }
 
 // importSource opens the OPML source: stdin when the argument is "-", otherwise

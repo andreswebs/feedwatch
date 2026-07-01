@@ -9,15 +9,30 @@ import (
 	"github.com/andreswebs/feedwatch/internal/poll"
 )
 
-// PollResult is the poll stdout envelope: how many feeds were polled and skipped,
-// the count of newly-seen items, and the items themselves. It deliberately omits
-// a failure count: the exit code reports whether feeds failed and stderr reports
-// which, so the envelope never enumerates failures.
+// PollFailure is one failed feed in the poll envelope: the feed URL, its error
+// category, and the HTTP status when the category is http (omitted otherwise).
+type PollFailure struct {
+	FeedURL  string        `json:"feed_url"`
+	Category core.Category `json:"category"`
+	Status   int           `json:"status,omitempty"`
+}
+
+// PollResult is the poll stdout envelope: how many feeds were polled, succeeded,
+// failed, and skipped, the count of newly-seen items, the items themselves, one
+// entry per failed feed, and one entry per feed renamed by a permanent redirect.
+// failures and renamed are always present, empty ([]) when nothing failed or was
+// renamed, so a partial failure or a feed identity change is observable from
+// stdout alone; the full per-feed detail (including the human message) is still
+// written to stderr.
 type PollResult struct {
-	Polled   int         `json:"polled"`
-	Skipped  int         `json:"skipped"`
-	NewItems int         `json:"new_items"`
-	Items    []core.Item `json:"items" jsonschema:"opaque"`
+	Polled    int               `json:"polled"`
+	Succeeded int               `json:"succeeded"`
+	Failed    int               `json:"failed"`
+	Skipped   int               `json:"skipped"`
+	NewItems  int               `json:"new_items"`
+	Items     []core.Item       `json:"items" jsonschema:"opaque"`
+	Failures  []PollFailure     `json:"failures"`
+	Renamed   []core.FeedRename `json:"renamed"`
 }
 
 // pollCommand registers the poll subcommand: fetch the due feeds (or the named
@@ -76,13 +91,34 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 		return err
 	}
 
+	failures := make([]PollFailure, 0, len(feedErrs))
+	for _, fe := range feedErrs {
+		failures = append(failures, PollFailure{
+			FeedURL:  fe.FeedURL,
+			Category: fe.Category,
+			Status:   fe.Status,
+		})
+	}
+
+	renamed := make([]core.FeedRename, 0, len(result.Renamed))
+	renamed = append(renamed, result.Renamed...)
+
 	if err := r.Result(PollResult{
-		Polled:   result.Polled,
-		Skipped:  result.Skipped,
-		NewItems: result.NewItems,
-		Items:    result.Items,
+		Polled:    result.Polled,
+		Succeeded: result.Polled - result.Failed,
+		Failed:    result.Failed,
+		Skipped:   result.Skipped,
+		NewItems:  result.NewItems,
+		Items:     result.Items,
+		Failures:  failures,
+		Renamed:   renamed,
 	}); err != nil {
 		return err
+	}
+
+	if len(renamed) > 0 {
+		loggerFrom(ctx).InfoContext(ctx, "renamed feeds after permanent redirect",
+			"count", len(renamed))
 	}
 
 	if len(feedErrs) > 0 {

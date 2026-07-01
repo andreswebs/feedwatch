@@ -31,10 +31,14 @@ func (s *Store) UpsertItems(ctx context.Context, feedURL string, items []core.It
 		}
 	}()
 
+	now := s.now()
 	var newItems []core.Item
 	for _, it := range items {
 		it.FeedURL = feedURL
-		isNew, err := upsertOne(ctx, tx, s.now(), it)
+		if it.FetchedAt.IsZero() {
+			it.FetchedAt = now
+		}
+		isNew, err := upsertOne(ctx, tx, it)
 		if err != nil {
 			return nil, err
 		}
@@ -50,15 +54,16 @@ func (s *Store) UpsertItems(ctx context.Context, feedURL string, items []core.It
 	return newItems, nil
 }
 
-// upsertOne classifies and writes a single item within the transaction.
-func upsertOne(ctx context.Context, tx *sql.Tx, now time.Time, it core.Item) (bool, error) {
+// upsertOne classifies and writes a single item within the transaction. The
+// item's FetchedAt is expected to be resolved by the caller.
+func upsertOne(ctx context.Context, tx *sql.Tx, it core.Item) (bool, error) {
 	var tombstoned int
 	err := tx.QueryRowContext(ctx,
 		`SELECT tombstoned FROM items WHERE feed_url = ? AND dedup_key = ?`,
 		it.FeedURL, it.DedupKey).Scan(&tombstoned)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return true, insertItem(ctx, tx, now, it)
+		return true, insertItem(ctx, tx, it)
 	case err != nil:
 		return false, fmt.Errorf("lookup item %q: %w", it.DedupKey, err)
 	case tombstoned == 1:
@@ -68,11 +73,7 @@ func upsertOne(ctx context.Context, tx *sql.Tx, now time.Time, it core.Item) (bo
 	}
 }
 
-func insertItem(ctx context.Context, tx *sql.Tx, now time.Time, it core.Item) error {
-	fetchedAt := it.FetchedAt
-	if fetchedAt.IsZero() {
-		fetchedAt = now
-	}
+func insertItem(ctx context.Context, tx *sql.Tx, it core.Item) error {
 	cats, encs, err := encodeItemJSON(it)
 	if err != nil {
 		return err
@@ -85,7 +86,7 @@ func insertItem(ctx context.Context, tx *sql.Tx, now time.Time, it core.Item) er
 		it.FeedURL, it.DedupKey, it.GUID, it.Title, it.Link, it.Summary,
 		it.ContentHTML, it.ContentText, it.ContentMIMEType, it.BaseURL, it.Author,
 		cats, encs, formatTimePtr(it.PublishedAt), formatTimePtr(it.UpdatedAt),
-		formatTime(fetchedAt)); err != nil {
+		formatTime(it.FetchedAt)); err != nil {
 		return fmt.Errorf("insert item %q: %w", it.DedupKey, err)
 	}
 	return nil
@@ -156,17 +157,20 @@ var fieldColumns = map[string]string{
 	"enclosures":        "enclosures",
 	"published_at":      "published_at",
 	"updated_at":        "updated_at",
+	"fetched_at":        "fetched_at",
 }
 
 // alwaysColumns are selected regardless of projection: identity plus the
-// columns ordering and date filters coalesce over.
+// columns ordering and date filters operate over.
 var alwaysColumns = map[string]bool{
 	"feed_url": true, "dedup_key": true, "published_at": true, "fetched_at": true,
 }
 
 // QueryItems returns stored, non-tombstoned items matching the query, honoring
-// since/until/contains filters, ordering, pagination, and field projection.
-func (s *Store) QueryItems(ctx context.Context, q core.ItemQuery) ([]core.Item, error) {
+// since/until/contains filters, ordering, pagination, and field projection. When
+// a publication-axis date window is active it also reports how many items were
+// excluded solely for carrying a null publication time.
+func (s *Store) QueryItems(ctx context.Context, q core.ItemQuery) (core.ItemQueryResult, error) {
 	cols := projectedColumns(q.Fields)
 	where, args := itemFilters(q)
 
@@ -183,7 +187,7 @@ func (s *Store) QueryItems(ctx context.Context, q core.ItemQuery) ([]core.Item, 
 
 	rows, err := s.db.QueryContext(ctx, b.String(), args...)
 	if err != nil {
-		return nil, fmt.Errorf("query items: %w", err)
+		return core.ItemQueryResult{}, fmt.Errorf("query items: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -191,14 +195,38 @@ func (s *Store) QueryItems(ctx context.Context, q core.ItemQuery) ([]core.Item, 
 	for rows.Next() {
 		it, err := scanItem(rows, cols)
 		if err != nil {
-			return nil, err
+			return core.ItemQueryResult{}, err
 		}
 		out = append(out, it)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate items: %w", err)
+		return core.ItemQueryResult{}, fmt.Errorf("iterate items: %w", err)
 	}
-	return out, nil
+
+	omitted, err := s.countOmittedNoDate(ctx, q)
+	if err != nil {
+		return core.ItemQueryResult{}, err
+	}
+	return core.ItemQueryResult{Items: out, OmittedNoDate: omitted}, nil
+}
+
+// countOmittedNoDate reports how many non-tombstoned items the query's
+// non-date predicates match but a publication-axis date window excludes solely
+// because their publication time is null. It is zero on the fetch axis and when
+// no date bound is set; only a publication-axis since/until can drop dateless
+// items.
+func (s *Store) countOmittedNoDate(ctx context.Context, q core.ItemQuery) (int, error) {
+	if q.TimeField == "fetched" || (q.Since == nil && q.Until == nil) {
+		return 0, nil
+	}
+	where, args := nonDateFilters(q)
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM items"+where+" AND published_at IS NULL", args...).
+		Scan(&n); err != nil {
+		return 0, fmt.Errorf("count dateless items: %w", err)
+	}
+	return n, nil
 }
 
 // projectedColumns resolves the column list for a query: all columns when no
@@ -226,9 +254,11 @@ func projectedColumns(fields []string) []string {
 	return cols
 }
 
-// itemFilters builds the WHERE clause (always excluding tombstoned rows) and
-// its bound arguments.
-func itemFilters(q core.ItemQuery) (string, []any) {
+// nonDateFilters builds the WHERE clause for every predicate except the date
+// window (tombstone exclusion, feed set, and substring match) with its bound
+// arguments. It is shared by the row query and the dateless-exclusion count so
+// the two never drift.
+func nonDateFilters(q core.ItemQuery) (string, []any) {
 	clauses := []string{"tombstoned = 0"}
 	var args []any
 
@@ -244,14 +274,6 @@ func itemFilters(q core.ItemQuery) (string, []any) {
 			args = append(args, f)
 		}
 	}
-	if q.Since != nil {
-		clauses = append(clauses, "COALESCE(published_at, fetched_at) >= ?")
-		args = append(args, formatTime(*q.Since))
-	}
-	if q.Until != nil {
-		clauses = append(clauses, "COALESCE(published_at, fetched_at) <= ?")
-		args = append(args, formatTime(*q.Until))
-	}
 	if q.Contains != "" {
 		clauses = append(clauses, "(title LIKE ? OR content_text LIKE ? OR content_html LIKE ?)")
 		like := "%" + q.Contains + "%"
@@ -260,10 +282,37 @@ func itemFilters(q core.ItemQuery) (string, []any) {
 	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
-// itemOrder renders the ORDER BY clause; "fetched" sorts on fetched_at,
-// anything else on the published-or-fetched coalesce.
+// itemFilters builds the full WHERE clause (non-date predicates plus the date
+// window) and its bound arguments. On the publication axis the window filters on
+// published_at directly: SQL three-valued logic makes published_at >= ? and
+// published_at <= ? untrue for a null row, so dateless items drop out of a
+// publication-axis window without a substitute fetch time.
+func itemFilters(q core.ItemQuery) (string, []any) {
+	where, args := nonDateFilters(q)
+
+	axis := "published_at" // publication axis (default): nulls excluded by SQL
+	if q.TimeField == "fetched" {
+		axis = "fetched_at"
+	}
+	if q.Since != nil {
+		where += " AND " + axis + " >= ?"
+		args = append(args, formatTime(*q.Since))
+	}
+	if q.Until != nil {
+		where += " AND " + axis + " <= ?"
+		args = append(args, formatTime(*q.Until))
+	}
+	return where, args
+}
+
+// itemOrder renders the ORDER BY clause; "fetched" sorts on fetched_at, anything
+// else on published_at. SQLite sorts NULL below any value, so published_at DESC
+// places null-publication items last and published_at ASC places them first, as
+// required; no explicit NULLS LAST/FIRST is needed. (The deferred Postgres
+// backend defaults the opposite way and will need explicit NULLS ordering, kept
+// behind the Store seam.)
 func itemOrder(o core.ItemOrder) string {
-	expr := "COALESCE(published_at, fetched_at)"
+	expr := "published_at"
 	if o.Field == "fetched" {
 		expr = "fetched_at"
 	}

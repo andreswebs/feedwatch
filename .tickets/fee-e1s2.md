@@ -1,6 +1,6 @@
 ---
 id: fee-e1s2
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-06-30T22:54:52Z
@@ -162,3 +162,9 @@ No change to the `poll` package, the store, or the fetch layer is required.
   "never discard stderr".
 - Related: `fee-9otc` (Req 6) adds `renamed` to this same envelope and depends
   on this ticket.
+
+## Notes
+
+**2026-06-30T23:17:53Z**
+
+Implemented poll failure visibility (Req 1, 002-beta). Added PollFailure{feed_url,category,status?} and succeeded/failed counts + failures[] list to PollResult in cli/poll.go; failures is a pure projection of the existing feedErrs slice (succeeded = polled - failed). failures built with make(...,0,n) so it marshals to [] never null (asserted on raw JSON); status uses omitempty so non-HTTP failures omit it. stderr detail and exit codes (0/2/3) unchanged. Updated cli poll_test.go (added mixed/all-success/all-failed/network-no-status assertions), regenerated 5 e2e poll.stdout goldens (go test ./internal/e2e -update), updated the hand-pinned poll contract in cli/schema_test.go (schema itself auto-reflects), and updated docs/usage.md. make build green.

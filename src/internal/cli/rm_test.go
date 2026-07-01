@@ -84,12 +84,12 @@ func TestRmByURL(t *testing.T) {
 	if _, err := st.GetFeed(context.Background(), url); err == nil {
 		t.Errorf("feed %q still present after rm", url)
 	}
-	items, err := st.QueryItems(context.Background(), core.ItemQuery{Feeds: []string{url}})
+	qr, err := st.QueryItems(context.Background(), core.ItemQuery{Feeds: []string{url}})
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
-	if len(items) != 0 {
-		t.Errorf("len(items) = %d after rm, want 0 (items should cascade)", len(items))
+	if len(qr.Items) != 0 {
+		t.Errorf("len(items) = %d after rm, want 0 (items should cascade)", len(qr.Items))
 	}
 }
 

@@ -161,6 +161,32 @@ func TestUpsertItemsReturnsOnlyNew(t *testing.T) {
 	}
 }
 
+// TestUpsertItemsResolvesFetchedAt asserts a new item with a zero FetchedAt is
+// stamped with the store clock and that the returned item carries that resolved
+// time, so the poll envelope never reports a zero fetched_at.
+func TestUpsertItemsResolvesFetchedAt(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTestFeed(t, s, feed)
+
+	got, err := s.UpsertItems(ctx, feed, []core.Item{
+		{FeedURL: feed, DedupKey: "a", Title: "A"}, // zero FetchedAt
+	})
+	if err != nil {
+		t.Fatalf("UpsertItems: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("returned %d new, want 1", len(got))
+	}
+	if got[0].FetchedAt.IsZero() {
+		t.Errorf("returned item FetchedAt is zero; want it stamped with the store clock")
+	}
+	if !got[0].FetchedAt.Equal(testNow) {
+		t.Errorf("returned item FetchedAt = %s, want %s", got[0].FetchedAt, testNow)
+	}
+}
+
 func TestUpsertItemsRefreshesContent(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
@@ -183,10 +209,11 @@ func TestUpsertItemsRefreshesContent(t *testing.T) {
 		t.Fatalf("refresh marked %d items new, want 0", len(got))
 	}
 
-	stored, err := s.QueryItems(ctx, core.ItemQuery{Feeds: []string{feed}})
+	qr, err := s.QueryItems(ctx, core.ItemQuery{Feeds: []string{feed}})
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
+	stored := qr.Items
 	if len(stored) != 1 {
 		t.Fatalf("len(stored) = %d, want 1", len(stored))
 	}
@@ -219,8 +246,8 @@ func TestQueryItemsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryItems: %v", err)
 		}
-		if len(got) != 2 {
-			t.Fatalf("since mar returned %d, want 2", len(got))
+		if len(got.Items) != 2 {
+			t.Fatalf("since mar returned %d, want 2", len(got.Items))
 		}
 	})
 	t.Run("until", func(t *testing.T) {
@@ -228,8 +255,8 @@ func TestQueryItemsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryItems: %v", err)
 		}
-		if len(got) != 2 {
-			t.Fatalf("until mar returned %d, want 2", len(got))
+		if len(got.Items) != 2 {
+			t.Fatalf("until mar returned %d, want 2", len(got.Items))
 		}
 	})
 	t.Run("contains", func(t *testing.T) {
@@ -237,8 +264,8 @@ func TestQueryItemsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryItems: %v", err)
 		}
-		if len(got) != 1 || got[0].DedupKey != "jan" {
-			t.Fatalf("contains returned %+v", got)
+		if len(got.Items) != 1 || got.Items[0].DedupKey != "jan" {
+			t.Fatalf("contains returned %+v", got.Items)
 		}
 	})
 	t.Run("order published desc", func(t *testing.T) {
@@ -246,8 +273,8 @@ func TestQueryItemsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryItems: %v", err)
 		}
-		if len(got) != 3 || got[0].DedupKey != "may" || got[2].DedupKey != "jan" {
-			t.Fatalf("order desc returned %+v", got)
+		if len(got.Items) != 3 || got.Items[0].DedupKey != "may" || got.Items[2].DedupKey != "jan" {
+			t.Fatalf("order desc returned %+v", got.Items)
 		}
 	})
 	t.Run("limit offset", func(t *testing.T) {
@@ -257,13 +284,16 @@ func TestQueryItemsFilters(t *testing.T) {
 		if err != nil {
 			t.Fatalf("QueryItems: %v", err)
 		}
-		if len(got) != 1 || got[0].DedupKey != "mar" {
-			t.Fatalf("limit/offset returned %+v", got)
+		if len(got.Items) != 1 || got.Items[0].DedupKey != "mar" {
+			t.Fatalf("limit/offset returned %+v", got.Items)
 		}
 	})
 }
 
-func TestQueryItemsNullPublishedOrdersByFetched(t *testing.T) {
+// TestQueryItemsNullPublishedOrdering covers the honest publication-axis order:
+// a null publication time sorts last under descending order and first under
+// ascending order, never substituting the fetch time (fee-aag4, Req 3).
+func TestQueryItemsNullPublishedOrdering(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	const feed = "https://blog.example/feed.xml"
@@ -271,7 +301,8 @@ func TestQueryItemsNullPublishedOrdersByFetched(t *testing.T) {
 
 	early := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	late := time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
-	// "nodate" has no published_at; its fetched_at (late) must drive ordering.
+	// "nodate" has no published_at; despite a late fetched_at it never jumps the
+	// dated item on the publication axis.
 	if _, err := s.UpsertItems(ctx, feed, []core.Item{
 		{FeedURL: feed, DedupKey: "dated", Title: "dated", PublishedAt: ptrTime(early), FetchedAt: early},
 		{FeedURL: feed, DedupKey: "nodate", Title: "nodate", FetchedAt: late},
@@ -279,16 +310,119 @@ func TestQueryItemsNullPublishedOrdersByFetched(t *testing.T) {
 		t.Fatalf("UpsertItems: %v", err)
 	}
 
-	got, err := s.QueryItems(ctx, core.ItemQuery{Order: core.ItemOrder{Field: "published", Desc: true}})
+	desc, err := s.QueryItems(ctx, core.ItemQuery{Order: core.ItemOrder{Field: "published", Desc: true}})
 	if err != nil {
-		t.Fatalf("QueryItems: %v", err)
+		t.Fatalf("QueryItems desc: %v", err)
 	}
-	if len(got) != 2 || got[0].DedupKey != "nodate" {
-		t.Fatalf("null-published item should sort by fetched_at first; got %+v", got)
+	if len(desc.Items) != 2 || desc.Items[0].DedupKey != "dated" || desc.Items[1].DedupKey != "nodate" {
+		t.Fatalf("desc: null-published item should sort last; got %+v", desc.Items)
 	}
-	if got[1].PublishedAt == nil {
+	if desc.Items[0].PublishedAt == nil {
 		t.Error("dated item lost its published_at")
 	}
+
+	asc, err := s.QueryItems(ctx, core.ItemQuery{Order: core.ItemOrder{Field: "published", Desc: false}})
+	if err != nil {
+		t.Fatalf("QueryItems asc: %v", err)
+	}
+	if len(asc.Items) != 2 || asc.Items[0].DedupKey != "nodate" || asc.Items[1].DedupKey != "dated" {
+		t.Fatalf("asc: null-published item should sort first; got %+v", asc.Items)
+	}
+}
+
+// TestQueryItemsTimeFieldAxis covers the --time-field selection: the publication
+// axis filters on published_at, the fetch axis filters on fetched_at, so an item
+// published before the window but fetched inside it is excluded on the
+// publication axis and included on the fetch axis.
+func TestQueryItemsTimeFieldAxis(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTestFeed(t, s, feed)
+
+	oldPub := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	recentFetch := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	if _, err := s.UpsertItems(ctx, feed, []core.Item{
+		{FeedURL: feed, DedupKey: "late", Title: "late", PublishedAt: ptrTime(oldPub), FetchedAt: recentFetch},
+	}); err != nil {
+		t.Fatalf("UpsertItems: %v", err)
+	}
+
+	cutoff := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	published, err := s.QueryItems(ctx, core.ItemQuery{Since: ptrTime(cutoff), TimeField: "published"})
+	if err != nil {
+		t.Fatalf("QueryItems published: %v", err)
+	}
+	if len(published.Items) != 0 {
+		t.Errorf("publication axis since mar should exclude item published in jan; got %+v", published.Items)
+	}
+
+	fetched, err := s.QueryItems(ctx, core.ItemQuery{Since: ptrTime(cutoff), TimeField: "fetched"})
+	if err != nil {
+		t.Fatalf("QueryItems fetched: %v", err)
+	}
+	if len(fetched.Items) != 1 || fetched.Items[0].DedupKey != "late" {
+		t.Errorf("fetch axis since mar should include item fetched in may; got %+v", fetched.Items)
+	}
+}
+
+// TestQueryItemsOmittedNoDate covers Req 3: a publication-axis date window
+// excludes null-publication items and reports the dropped count; the fetch axis
+// and an unfiltered query report zero.
+func TestQueryItemsOmittedNoDate(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTestFeed(t, s, feed)
+
+	dated := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	fetched := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	if _, err := s.UpsertItems(ctx, feed, []core.Item{
+		{FeedURL: feed, DedupKey: "dated", Title: "dated", PublishedAt: ptrTime(dated), FetchedAt: dated},
+		{FeedURL: feed, DedupKey: "nopub1", Title: "nopub1", FetchedAt: fetched},
+		{FeedURL: feed, DedupKey: "nopub2", Title: "nopub2", FetchedAt: fetched},
+	}); err != nil {
+		t.Fatalf("UpsertItems: %v", err)
+	}
+
+	cutoff := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("publication axis excludes and counts", func(t *testing.T) {
+		got, err := s.QueryItems(ctx, core.ItemQuery{Since: ptrTime(cutoff), TimeField: "published"})
+		if err != nil {
+			t.Fatalf("QueryItems: %v", err)
+		}
+		if len(got.Items) != 1 || got.Items[0].DedupKey != "dated" {
+			t.Fatalf("publication axis should return only the dated item; got %+v", got.Items)
+		}
+		if got.OmittedNoDate != 2 {
+			t.Errorf("OmittedNoDate = %d, want 2", got.OmittedNoDate)
+		}
+	})
+
+	t.Run("fetch axis includes all, omits nothing", func(t *testing.T) {
+		got, err := s.QueryItems(ctx, core.ItemQuery{Since: ptrTime(cutoff), TimeField: "fetched"})
+		if err != nil {
+			t.Fatalf("QueryItems: %v", err)
+		}
+		if len(got.Items) != 3 {
+			t.Fatalf("fetch axis should return all 3 items; got %d", len(got.Items))
+		}
+		if got.OmittedNoDate != 0 {
+			t.Errorf("fetch axis OmittedNoDate = %d, want 0", got.OmittedNoDate)
+		}
+	})
+
+	t.Run("no date filter omits nothing", func(t *testing.T) {
+		got, err := s.QueryItems(ctx, core.ItemQuery{})
+		if err != nil {
+			t.Fatalf("QueryItems: %v", err)
+		}
+		if len(got.Items) != 3 || got.OmittedNoDate != 0 {
+			t.Errorf("unfiltered query: items=%d omitted=%d, want 3 and 0", len(got.Items), got.OmittedNoDate)
+		}
+	})
 }
 
 func TestQueryItemsFieldProjection(t *testing.T) {
@@ -304,10 +438,11 @@ func TestQueryItemsFieldProjection(t *testing.T) {
 		t.Fatalf("UpsertItems: %v", err)
 	}
 
-	got, err := s.QueryItems(ctx, core.ItemQuery{Fields: []string{"title", "link"}})
+	qr, err := s.QueryItems(ctx, core.ItemQuery{Fields: []string{"title", "link"}})
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
+	got := qr.Items
 	if len(got) != 1 {
 		t.Fatalf("len(got) = %d", len(got))
 	}
@@ -349,7 +484,7 @@ func TestRecordFailureThenSuccess(t *testing.T) {
 
 	fetched := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	nextDue := time.Date(2026, 6, 2, 1, 0, 0, 0, time.UTC)
-	if err := s.RecordSuccess(ctx, feed, fetched, nextDue, ""); err != nil {
+	if _, err := s.RecordSuccess(ctx, feed, fetched, nextDue, ""); err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
 	}
 	f, err = s.GetFeed(ctx, feed)
@@ -374,10 +509,10 @@ func TestDueFeeds(t *testing.T) {
 	addTestFeed(t, s, "https://future.example/feed")
 	addTestFeed(t, s, "https://disabled.example/feed")
 
-	if err := s.RecordSuccess(ctx, "https://past.example/feed", now, now.Add(-time.Hour), ""); err != nil {
+	if _, err := s.RecordSuccess(ctx, "https://past.example/feed", now, now.Add(-time.Hour), ""); err != nil {
 		t.Fatalf("past due: %v", err)
 	}
-	if err := s.RecordSuccess(ctx, "https://future.example/feed", now, now.Add(time.Hour), ""); err != nil {
+	if _, err := s.RecordSuccess(ctx, "https://future.example/feed", now, now.Add(time.Hour), ""); err != nil {
 		t.Fatalf("future due: %v", err)
 	}
 	if err := s.SetStatus(ctx, "https://disabled.example/feed", core.FeedDisabled); err != nil {
@@ -427,10 +562,11 @@ func TestPruneItemsByAge(t *testing.T) {
 		t.Fatalf("deleted = %d, want 1", deleted)
 	}
 
-	got, err := s.QueryItems(ctx, core.ItemQuery{Feeds: []string{feed}})
+	qr, err := s.QueryItems(ctx, core.ItemQuery{Feeds: []string{feed}})
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
+	got := qr.Items
 	if len(got) != 1 || got[0].DedupKey != "recent" {
 		t.Fatalf("query after prune returned %+v", got)
 	}
@@ -475,12 +611,13 @@ func TestPruneItemsByMaxPerFeed(t *testing.T) {
 		t.Fatalf("deleted = %d, want 3", deleted)
 	}
 
-	got, err := s.QueryItems(ctx, core.ItemQuery{
+	qr, err := s.QueryItems(ctx, core.ItemQuery{
 		Feeds: []string{feed}, Order: core.ItemOrder{Field: "published", Desc: true},
 	})
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
+	got := qr.Items
 	if len(got) != 2 || got[0].DedupKey != "k4" || got[1].DedupKey != "k3" {
 		t.Fatalf("kept wrong items: %+v", got)
 	}
@@ -625,8 +762,12 @@ func TestRecordSuccessRewritesURLAndCascadesItems(t *testing.T) {
 		t.Fatalf("UpsertItems: %v", err)
 	}
 
-	if err := s.RecordSuccess(ctx, oldURL, testNow, testNow.Add(time.Hour), newURL); err != nil {
+	renamedTo, err := s.RecordSuccess(ctx, oldURL, testNow, testNow.Add(time.Hour), newURL)
+	if err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
+	}
+	if renamedTo != newURL {
+		t.Errorf("renamedTo = %q, want %q", renamedTo, newURL)
 	}
 
 	if _, err := s.GetFeed(ctx, oldURL); err == nil {
@@ -644,8 +785,8 @@ func TestRecordSuccessRewritesURLAndCascadesItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryItems: %v", err)
 	}
-	if len(items) != 1 {
-		t.Fatalf("items under new URL = %d, want 1", len(items))
+	if len(items.Items) != 1 {
+		t.Fatalf("items under new URL = %d, want 1", len(items.Items))
 	}
 }
 
@@ -657,8 +798,12 @@ func TestRecordSuccessSkipsRewriteWhenTargetSubscribed(t *testing.T) {
 	addTestFeed(t, s, oldURL)
 	addTestFeed(t, s, newURL)
 
-	if err := s.RecordSuccess(ctx, oldURL, testNow, testNow.Add(time.Hour), newURL); err != nil {
+	renamedTo, err := s.RecordSuccess(ctx, oldURL, testNow, testNow.Add(time.Hour), newURL)
+	if err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
+	}
+	if renamedTo != "" {
+		t.Errorf("renamedTo = %q, want \"\" (rename declined, target subscribed)", renamedTo)
 	}
 
 	// Both subscriptions survive: no merge, original kept.
@@ -676,8 +821,12 @@ func TestRecordSuccessSameURLIsNoRename(t *testing.T) {
 	const feed = "https://blog.example/feed.xml"
 	addTestFeed(t, s, feed)
 
-	if err := s.RecordSuccess(ctx, feed, testNow, testNow.Add(time.Hour), feed); err != nil {
+	renamedTo, err := s.RecordSuccess(ctx, feed, testNow, testNow.Add(time.Hour), feed)
+	if err != nil {
 		t.Fatalf("RecordSuccess: %v", err)
+	}
+	if renamedTo != "" {
+		t.Errorf("renamedTo = %q, want \"\" (same URL is no rename)", renamedTo)
 	}
 	got, err := s.GetFeed(ctx, feed)
 	if err != nil {

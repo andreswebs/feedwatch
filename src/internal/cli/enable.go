@@ -58,7 +58,7 @@ func (d Deps) enableAction(ctx context.Context, cmd *cliv3.Command) error {
 	// is set to now so the cleared backoff leaves the feed immediately due rather
 	// than waiting out the disabled feed's backed-off schedule.
 	now := orSystemClock(d.Clock)()
-	if err := st.RecordSuccess(ctx, feed.URL, now, now, ""); err != nil {
+	if _, err := st.RecordSuccess(ctx, feed.URL, now, now, ""); err != nil {
 		return err
 	}
 
