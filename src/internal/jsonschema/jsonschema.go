@@ -4,19 +4,24 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // schema is the internal draft-07 representation marshaled to JSON. Every field
 // is omitempty so each shape (object, array, scalar, oneOf) emits only the keys
-// it uses.
+// it uses. Type is any so it can hold either a string ("string") or a JSON array
+// (["string","null"]) for nullable types.
 type schema struct {
-	Type        string                     `json:"type,omitempty"`
+	Type        any                        `json:"type,omitempty"`
+	Format      string                     `json:"format,omitempty"`
 	Properties  map[string]json.RawMessage `json:"properties,omitempty"`
 	Required    []string                   `json:"required,omitempty"`
 	Items       json.RawMessage            `json:"items,omitempty"`
 	Description string                     `json:"description,omitempty"`
 	OneOf       []json.RawMessage          `json:"oneOf,omitempty"`
 }
+
+var timeType = reflect.TypeOf(time.Time{})
 
 // Reflect returns the draft-07 JSON Schema for the struct type of zero.
 func Reflect(zero any) json.RawMessage {
@@ -40,8 +45,14 @@ func Scalar(typ, description string) json.RawMessage {
 func reflectType(t reflect.Type) json.RawMessage {
 	switch t.Kind() {
 	case reflect.Pointer:
+		if t.Elem() == timeType {
+			return marshal(schema{Type: []string{"string", "null"}, Format: "date-time"})
+		}
 		return reflectType(t.Elem())
 	case reflect.Struct:
+		if t == timeType {
+			return marshal(schema{Type: "string", Format: "date-time"})
+		}
 		return reflectStruct(t)
 	case reflect.Slice, reflect.Array:
 		return marshal(schema{Type: "array", Items: reflectType(t.Elem())})

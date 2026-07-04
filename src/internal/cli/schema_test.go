@@ -301,7 +301,7 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 		"disable":  {[]string{"feed"}, []string{"feed"}},
 		"prune":    {[]string{"pruned"}, []string{"pruned"}},
 		"items":    {[]string{"items", "omitted_no_date"}, []string{"items"}},
-		"poll":     {[]string{"polled", "succeeded", "failed", "skipped", "new_items", "items", "failures", "renamed"}, []string{"polled", "succeeded", "failed", "skipped", "new_items", "items", "failures", "renamed"}},
+		"poll":     {[]string{"polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"}, []string{"polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"}},
 		"discover": {[]string{"candidates"}, []string{"candidates"}},
 		"import":   {[]string{"added", "skipped", "failed"}, []string{"added", "skipped", "failed"}},
 	}
@@ -334,7 +334,8 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 	assertContract(t, "import.failed[]", parseSchema(t, failed.Items),
 		[]string{"xmlUrl", "reason"}, []string{"xmlUrl", "reason"})
 
-	// poll and items keep items opaque: an array of bare objects, not expanded.
+	// poll and items document the item object shape: an array of objects with
+	// at least published_at and title in the schema properties.
 	for _, name := range []string{"poll", "items"} {
 		p := parseSchema(t, registryFor(name).output)
 		arr := parseSchema(t, p.Properties["items"])
@@ -342,8 +343,13 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 			t.Errorf("%s.items type = %q, want array", name, arr.Type)
 		}
 		elem := parseSchema(t, arr.Items)
-		if elem.Type != "object" || len(elem.Properties) != 0 {
-			t.Errorf("%s.items element = %s, want a bare {type:object}", name, arr.Items)
+		if elem.Type != "object" {
+			t.Errorf("%s.items element type = %q, want object", name, elem.Type)
+		}
+		for _, field := range []string{"published_at", "title", "fetched_at", "link"} {
+			if _, ok := elem.Properties[field]; !ok {
+				t.Errorf("%s.items element missing property %q; got %v", name, field, propKeys(elem.Properties))
+			}
 		}
 	}
 

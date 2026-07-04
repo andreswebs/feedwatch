@@ -128,6 +128,33 @@ func TestFeedErrorStringStyle(t *testing.T) {
 	}
 }
 
+// Behavior 5: Detail() returns the bare human detail without the category/URL/status head.
+func TestFeedErrorDetail(t *testing.T) {
+	withMsg := &core.FeedError{
+		Category: core.CatParse,
+		FeedURL:  "u",
+		Message:  "explicit message",
+		Err:      errors.New("inner"),
+	}
+	if got := withMsg.Detail(); got != "explicit message" {
+		t.Errorf("Detail() = %q, want %q", got, "explicit message")
+	}
+
+	noMsg := &core.FeedError{
+		Category: core.CatNetwork,
+		FeedURL:  "u",
+		Err:      errors.New("inner cause"),
+	}
+	if got := noMsg.Detail(); got != "inner cause" {
+		t.Errorf("Detail() = %q, want %q", got, "inner cause")
+	}
+
+	neither := &core.FeedError{Category: core.CatHTTP, FeedURL: "u", Status: 500}
+	if got := neither.Detail(); got != "" {
+		t.Errorf("Detail() = %q, want empty string for FeedError with no Message or Err", got)
+	}
+}
+
 // The Message field is preferred over the wrapped cause when present, and falls
 // back to the cause's text when Message is empty.
 func TestFeedErrorMessageFallback(t *testing.T) {

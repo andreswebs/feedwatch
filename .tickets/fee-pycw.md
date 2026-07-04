@@ -1,6 +1,6 @@
 ---
 id: fee-pycw
-status: open
+status: closed
 deps: [fee-udsl]
 links: []
 created: 2026-07-04T12:21:07Z
@@ -103,3 +103,9 @@ Implementation points:
 - `feedwatch schema poll` documents the new fields (via struct reflection).
 - `docs/usage.md` updated.
 - `make build` passes.
+
+## Notes
+
+**2026-07-04T15:36:46Z**
+
+Added fetched and deduped counters to the poll envelope. fetched counts items parsed across 200 responses (304s contribute 0); deduped = fetched - new_items. Changes: pollTotals gains fetched field (incremented in consume loop before consumeSuccess for non-NotModified outcomes); Result gains Fetched/Deduped; PollResult gains Fetched/Deduped between Skipped and NewItems; shapePollResult maps them through. Updated 5 e2e golden stdout files and schema_test contract. docs/usage.md poll section updated with field definitions and examples.

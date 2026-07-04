@@ -45,13 +45,18 @@ func graceAfterCancel(parent context.Context, grace time.Duration) (context.Cont
 // Result is the outcome summary of a poll run, ready for the output stage.
 // Polled counts the feeds fetched (successes and failures); Skipped counts the
 // active feeds left unpolled because they were not due; Failed is the subset of
-// Polled that errored. Items holds the newly-seen items in feed-selection order.
+// Polled that errored. Fetched is the total items parsed across all successful
+// 200 responses (304s contribute 0); NewItems is the count stored for the first
+// time; Deduped is Fetched minus NewItems. Items holds the newly-seen items in
+// feed-selection order.
 // Failed is not part of the stdout envelope: the exit code reports whether feeds
 // failed and stderr reports which, so the caller drops it when shaping output.
 type Result struct {
 	Polled   int
 	Skipped  int
+	Fetched  int
 	NewItems int
+	Deduped  int
 	Failed   int
 	Items    []core.Item
 	Renamed  []core.FeedRename
@@ -96,23 +101,31 @@ func Run(ctx context.Context, d Deps, names []string, force bool) (Result, []*co
 	persistCtx, stop := graceAfterCancel(ctx, persistGrace)
 	defer stop()
 	totals, feedErrs, err := consume(persistCtx, d, outcomes)
-	if err != nil {
-		return Result{}, feedErrs, err
+	res := Result{
+		Polled:   totals.polled,
+		Skipped:  skipped,
+		Fetched:  totals.fetched,
+		NewItems: totals.newItems,
+		Deduped:  totals.fetched - totals.newItems,
+		Failed:   totals.failed,
+		Items:    orderedItems(feeds, totals),
+		Renamed:  totals.renames,
 	}
+	if err != nil {
+		return res, feedErrs, err
+	}
+	return res, feedErrs, nil
+}
 
+// orderedItems flattens the per-feed new items accumulated in totals into
+// feed-selection order, so a partial result (consume stopped early on a hard
+// failure) reports exactly the feeds it reached.
+func orderedItems(feeds []core.Feed, totals pollTotals) []core.Item {
 	items := make([]core.Item, 0, totals.newItems)
 	for _, f := range feeds {
 		items = append(items, totals.newByFeed[f.URL]...)
 	}
-
-	return Result{
-		Polled:   totals.polled,
-		Skipped:  skipped,
-		NewItems: totals.newItems,
-		Failed:   totals.failed,
-		Items:    items,
-		Renamed:  totals.renames,
-	}, feedErrs, nil
+	return items
 }
 
 // skippedCount reports how many active feeds were left unpolled because they were

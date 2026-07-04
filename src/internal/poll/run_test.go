@@ -399,3 +399,209 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		}
 	})
 }
+
+// A mid-persist hard failure (a store write failing partway through the
+// dedup-and-consume stage) must not discard the work already committed: Run
+// returns both the error and a Result covering exactly the feeds persisted
+// before the failure.
+func TestRunMidPersistFailureReturnsPartialResult(t *testing.T) {
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	// Feeds are fetched and persisted in URL order (see DueFeeds), so goodURL
+	// sorting first ensures it commits before badURL's write fails.
+	const goodURL = "https://aaa-good.example/feed.xml"
+	const badURL = "https://zzz-bad.example/feed.xml"
+	seedFeed(t, s, goodURL, fixedTime().Add(-time.Hour))
+	seedFeed(t, s, badURL, fixedTime().Add(-time.Hour))
+
+	failing := &testsupport.FailingUpsertStore{Store: s, FailURL: badURL}
+
+	f := testsupport.NewFakeFetcher()
+	f.Register(goodURL, okResult(goodURL))
+	f.Register(badURL, okResult(badURL))
+	p := testsupport.NewFakeParser()
+	p.Register(goodURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "good item"}}})
+	p.Register(badURL, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "bad item"}}})
+
+	d := Deps{
+		Store:            failing,
+		Fetcher:          f,
+		Parser:           p,
+		Clock:            clk,
+		Concurrency:      8,
+		DefaultInterval:  time.Hour,
+		FailureThreshold: 10,
+		MaxBackoff:       24 * time.Hour,
+	}
+
+	result, _, err := Run(context.Background(), d, nil, false)
+	if err == nil {
+		t.Fatal("Run: want error from mid-persist store failure, got nil")
+	}
+	if result.NewItems != 1 || len(result.Items) != 1 || result.Items[0].Title != "good item" {
+		t.Fatalf("result = %+v, want NewItems=1 covering only the feed persisted before the failure", result)
+	}
+	if result.Polled == 0 {
+		t.Fatalf("result.Polled = 0, want > 0 to distinguish a mid-persist failure from an early hard failure")
+	}
+}
+
+// An early hard failure, before any feed is fetched or persisted, returns a
+// zero Result so the caller knows to leave stdout empty.
+func TestRunEarlyHardFailureReturnsZeroResult(t *testing.T) {
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	result, _, err := Run(context.Background(), runDeps(s, testsupport.NewFakeFetcher(), testsupport.NewFakeParser(), clk),
+		[]string{"https://unknown.example/feed.xml"}, false)
+	if err == nil {
+		t.Fatal("Run: want error for an unknown named feed, got nil")
+	}
+	if result.Polled != 0 || len(result.Items) != 0 {
+		t.Fatalf("result = %+v, want zero Result on an early hard failure", result)
+	}
+}
+
+// TestRunFetchedAndDedupedCounters: on a first poll over two feeds, Fetched
+// equals the total items parsed, NewItems equals Fetched, and Deduped is zero.
+func TestRunFetchedAndDedupedCounters(t *testing.T) {
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	urlA := "https://a.example/feed.xml"
+	urlB := "https://b.example/feed.xml"
+	seedFeed(t, s, urlA, fixedTime().Add(-time.Hour))
+	seedFeed(t, s, urlB, fixedTime().Add(-time.Hour))
+
+	f := testsupport.NewFakeFetcher()
+	f.Register(urlA, okResult(urlA))
+	f.Register(urlB, okResult(urlB))
+
+	p := testsupport.NewFakeParser()
+	p.Register(urlA, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
+	p.Register(urlB, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}, {GUID: "b2", Title: "b2"}, {GUID: "b3", Title: "b3"}}})
+
+	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Fetched != 5 {
+		t.Errorf("Fetched = %d, want 5", result.Fetched)
+	}
+	if result.NewItems != 5 {
+		t.Errorf("NewItems = %d, want 5", result.NewItems)
+	}
+	if result.Deduped != 0 {
+		t.Errorf("Deduped = %d, want 0 (all new)", result.Deduped)
+	}
+}
+
+// TestRunFetchedAndDedupedOnSecondPoll: a forced second poll over the same
+// items reports Fetched=N, NewItems=0, Deduped=N.
+func TestRunFetchedAndDedupedOnSecondPoll(t *testing.T) {
+	ctx := context.Background()
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	url := "https://blog.example/feed.xml"
+	seedFeed(t, s, url, fixedTime().Add(-time.Hour))
+
+	f := testsupport.NewFakeFetcher()
+	f.Register(url, okResult(url))
+	p := testsupport.NewFakeParser()
+	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+		{GUID: "g1", Title: "g1"},
+		{GUID: "g2", Title: "g2"},
+		{GUID: "g3", Title: "g3"},
+	}})
+	d := runDeps(s, f, p, clk)
+
+	if _, _, err := Run(ctx, d, nil, false); err != nil {
+		t.Fatalf("Run (first): %v", err)
+	}
+
+	second, _, err := Run(ctx, d, nil, true)
+	if err != nil {
+		t.Fatalf("Run (second): %v", err)
+	}
+	if second.Fetched != 3 {
+		t.Errorf("second Fetched = %d, want 3", second.Fetched)
+	}
+	if second.NewItems != 0 {
+		t.Errorf("second NewItems = %d, want 0", second.NewItems)
+	}
+	if second.Deduped != 3 {
+		t.Errorf("second Deduped = %d, want 3", second.Deduped)
+	}
+}
+
+// TestRunNotModifiedContributesZeroToFetched: a 304 Not Modified response
+// carries no body so it contributes nothing to the Fetched counter.
+func TestRunNotModifiedContributesZeroToFetched(t *testing.T) {
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	url := "https://blog.example/feed.xml"
+	seedFeed(t, s, url, fixedTime().Add(-time.Hour))
+
+	f := testsupport.NewFakeFetcher()
+	f.Register(url, core.FetchResult{Status: 304, NotModified: true, FinalURL: url})
+
+	result, _, err := Run(context.Background(), runDeps(s, f, testsupport.NewFakeParser(), clk), nil, false)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if result.Fetched != 0 {
+		t.Errorf("Fetched = %d, want 0 for a 304 Not Modified", result.Fetched)
+	}
+	if result.Deduped != 0 {
+		t.Errorf("Deduped = %d, want 0 for a 304", result.Deduped)
+	}
+}
+
+// TestRunMixedNewAndKnownItems: when a feed is re-polled with one additional
+// item appended, Fetched counts all parsed items, NewItems is 1, Deduped is
+// Fetched-1.
+func TestRunMixedNewAndKnownItems(t *testing.T) {
+	ctx := context.Background()
+	clk := testsupport.FixedClock(fixedTime())
+	s := testsupport.NewInMemoryStore(clk)
+
+	url := "https://blog.example/feed.xml"
+	seedFeed(t, s, url, fixedTime().Add(-time.Hour))
+
+	f := testsupport.NewFakeFetcher()
+	f.Register(url, okResult(url))
+	p := testsupport.NewFakeParser()
+	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+		{GUID: "g1", Title: "g1"},
+		{GUID: "g2", Title: "g2"},
+	}})
+	d := runDeps(s, f, p, clk)
+
+	if _, _, err := Run(ctx, d, nil, false); err != nil {
+		t.Fatalf("Run (seed): %v", err)
+	}
+
+	// Append one new item and re-poll (force to bypass scheduling).
+	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+		{GUID: "g1", Title: "g1"},
+		{GUID: "g2", Title: "g2"},
+		{GUID: "g3", Title: "g3"},
+	}})
+
+	result, _, err := Run(ctx, d, nil, true)
+	if err != nil {
+		t.Fatalf("Run (append): %v", err)
+	}
+	if result.Fetched != 3 {
+		t.Errorf("Fetched = %d, want 3", result.Fetched)
+	}
+	if result.NewItems != 1 {
+		t.Errorf("NewItems = %d, want 1", result.NewItems)
+	}
+	if result.Deduped != 2 {
+		t.Errorf("Deduped = %d, want 2", result.Deduped)
+	}
+}

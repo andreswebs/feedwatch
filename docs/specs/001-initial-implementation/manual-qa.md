@@ -903,6 +903,41 @@ and the exit code with `; echo $?`.
 
 ---
 
+### Module: Check Command
+
+#### TC-CHECK-001: `import --no-validate` then `check` flags dead feeds (P1)
+
+- **Steps:**
+  1. Prepare an OPML file with two valid feeds and one unreachable URL.
+  2. `feedwatch import --no-validate subs.opml` -- all three are subscribed without
+     fetching.
+  3. `feedwatch check`.
+- **Expected:** exit 3; `checked=3 ok=2 failed=1`; the dead feed appears in
+  `failures` with an appropriate `category` (`network` or `http`); no items
+  stored; no change to ETag or schedule timestamps on surviving feeds.
+
+#### TC-CHECK-002: Named ref by alias, unknown ref (P2)
+
+- **Steps:**
+  1. `feedwatch add ${FEED_URL} --alias myfeed`.
+  2. `feedwatch check myfeed` -- checked by alias.
+  3. `feedwatch check https://no-such.example/feed.xml` -- unknown ref.
+- **Expected:** step 2 exits 0 and reports `checked=1`; step 3 exits 1 with a
+  usage-category JSON error on stderr and nothing on stdout.
+
+#### TC-CHECK-003: All feeds pass -- exit 0, failures is empty list (P1)
+
+- **Steps:** subscribe to a reachable feed; `feedwatch check`.
+- **Expected:** exit 0; `{"checked":1,"ok":1,"failed":0,"failures":[]}`.
+  `failures` serializes as `[]`, never `null`.
+
+#### TC-CHECK-004: Disabled feeds skipped when unnamed (P2)
+
+- **Steps:** add two feeds, disable one, run `feedwatch check` with no args.
+- **Expected:** only the active feed is checked; `checked=1`.
+
+---
+
 ### Module: Scheduling (REQ 18)
 
 #### TC-SCHED-001: No internal scheduling (P1)

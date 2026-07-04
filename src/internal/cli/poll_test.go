@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,7 +69,9 @@ type pollEnvelope struct {
 	Succeeded int              `json:"succeeded"`
 	Failed    int              `json:"failed"`
 	Skipped   int              `json:"skipped"`
+	Fetched   int              `json:"fetched"`
 	NewItems  int              `json:"new_items"`
+	Deduped   int              `json:"deduped"`
 	Items     []map[string]any `json:"items"`
 	Failures  []map[string]any `json:"failures"`
 	Renamed   []map[string]any `json:"renamed"`
@@ -302,6 +305,79 @@ func TestPollMixedExits3(t *testing.T) {
 	}
 }
 
+// TestPollFailureMessageCarriesDetail covers that every failures[] entry in the
+// poll envelope carries a non-empty "message" field with the underlying error
+// detail, and that different categories carry the expected detail text.
+func TestPollFailureMessageCarriesDetail(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	networkURL := "https://net.example/feed.xml"
+	httpURL := "https://http.example/feed.xml"
+	parseURL := "https://parse.example/feed.xml"
+	seedDueFeed(t, st, networkURL)
+	seedDueFeed(t, st, httpURL)
+	seedDueFeed(t, st, parseURL)
+
+	fetcher.RegisterError(networkURL, core.NetworkErr(networkURL, &core.FeedError{
+		Category: core.CatNetwork,
+		Message:  "connection refused",
+	}))
+	fetcher.RegisterError(httpURL, core.HTTPErr(httpURL, 500, &core.FeedError{
+		Category: core.CatHTTP,
+		Message:  "server returned HTTP 500",
+	}))
+	// parseURL fetches OK but the parser returns a parse error.
+	fetcher.Register(parseURL, okResult())
+	parser.RegisterError(parseURL, core.ParseErr(parseURL, &core.FeedError{
+		Category: core.CatParse,
+		Message:  "could not detect feed type",
+	}))
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll")
+
+	if res.code != 2 {
+		t.Errorf("exit code = %d, want 2 (all failed)", res.code)
+	}
+
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if len(env.Failures) != 3 {
+		t.Fatalf("failures length = %d, want 3", len(env.Failures))
+	}
+
+	byURL := make(map[string]map[string]any, 3)
+	for _, f := range env.Failures {
+		u, _ := f["feed_url"].(string)
+		byURL[u] = f
+	}
+
+	for _, url := range []string{networkURL, httpURL, parseURL} {
+		f, ok := byURL[url]
+		if !ok {
+			t.Errorf("no failure entry for %s", url)
+			continue
+		}
+		msg, _ := f["message"].(string)
+		if msg == "" {
+			t.Errorf("failure for %s has empty message", url)
+		}
+	}
+	if msg, _ := byURL[httpURL]["message"].(string); msg == "" || !containsAny(msg, "500", "HTTP") {
+		t.Errorf("http failure message = %q, want it to reference 500 or HTTP", msg)
+	}
+}
+
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestPollFailureOmitsStatusForNonHTTP covers that a failure with no HTTP status
 // (here a network error) carries no "status" key in its stdout failures entry,
 // while still reporting feed_url and category.
@@ -334,5 +410,113 @@ func TestPollFailureOmitsStatusForNonHTTP(t *testing.T) {
 	}
 	if _, ok := f["status"]; ok {
 		t.Errorf("failure for a network error must omit status, got %v", f["status"])
+	}
+}
+
+// TestPollMidPersistFailureWritesPartialEnvelopeAndExits1 covers the fee-oyw2
+// fix: a hard store-write failure partway through persistence must not
+// discard the work already committed. The feed persisted before the failure
+// (sorted first by URL) is reported on stdout, and the invocation still exits
+// 1 as a hard failure.
+func TestPollMidPersistFailureWritesPartialEnvelopeAndExits1(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	// Feeds are polled in URL order, so goodURL persists before badURL's write fails.
+	const goodURL = "https://aaa-good.example/feed.xml"
+	const badURL = "https://zzz-bad.example/feed.xml"
+	seedDueFeed(t, st, goodURL)
+	seedDueFeed(t, st, badURL)
+	fetcher.Register(goodURL, okResult())
+	fetcher.Register(badURL, okResult())
+	parser.Register(goodURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://aaa-good.example/1"}}})
+	parser.Register(badURL, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Bad Item", Link: "https://zzz-bad.example/1"}}})
+
+	failing := &testsupport.FailingUpsertStore{Store: st, FailURL: badURL}
+
+	res := runPoll(t, failing, fetcher, parser, clk, "poll")
+
+	if res.code != 1 {
+		t.Errorf("exit code = %d, want 1 for a mid-persist hard failure", res.code)
+	}
+
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.NewItems != 1 || len(env.Items) != 1 {
+		t.Fatalf("new_items = %d, items = %d, want 1 and 1 (only the feed persisted before the failure)", env.NewItems, len(env.Items))
+	}
+	if env.Items[0]["title"] != "Good Item" {
+		t.Errorf("stdout item title = %v, want %q", env.Items[0]["title"], "Good Item")
+	}
+
+	var errEnv map[string]any
+	if err := json.Unmarshal([]byte(res.err), &errEnv); err != nil {
+		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
+	}
+}
+
+// TestPollEarlyHardFailureLeavesStdoutEmpty covers that an early hard failure
+// (here an unknown named feed, failing before any fetch or persist) leaves
+// stdout empty and exits 1, unlike a mid-persist failure.
+func TestPollEarlyHardFailureLeavesStdoutEmpty(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll", "https://unknown.example/feed.xml")
+
+	if res.code != 1 {
+		t.Errorf("exit code = %d, want 1 for an early hard failure", res.code)
+	}
+	if res.out != "" {
+		t.Errorf("stdout = %q, want empty for an early hard failure", res.out)
+	}
+}
+
+// TestPollEnvelopeHasFetchedAndDedupedCounters covers that the stdout poll
+// envelope carries fetched and deduped. First poll: fetched==new_items,
+// deduped==0. Second forced poll: fetched==original count, new_items==0,
+// deduped==fetched.
+func TestPollEnvelopeHasFetchedAndDedupedCounters(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	url := "https://a.example/feed.xml"
+	seedDueFeed(t, st, url)
+	fetcher.Register(url, okResult())
+	parser.Register(url, parse.ParsedFeed{Items: []core.Item{
+		{GUID: "a1", Title: "Item 1", Link: "https://a.example/1"},
+		{GUID: "a2", Title: "Item 2", Link: "https://a.example/2"},
+	}})
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll")
+
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.Fetched != 2 {
+		t.Errorf("fetched = %d, want 2 (first poll, all new)", env.Fetched)
+	}
+	if env.NewItems != 2 {
+		t.Errorf("new_items = %d, want 2", env.NewItems)
+	}
+	if env.Deduped != 0 {
+		t.Errorf("deduped = %d, want 0 (first poll, nothing previously seen)", env.Deduped)
+	}
+
+	// Second poll (--force to bypass scheduling): same items, none new.
+	res2 := runPoll(t, st, fetcher, parser, clk, "poll", "--force")
+
+	var env2 pollEnvelope
+	if err := json.Unmarshal([]byte(res2.out), &env2); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res2.out)
+	}
+	if env2.Fetched != 2 {
+		t.Errorf("second fetched = %d, want 2", env2.Fetched)
+	}
+	if env2.NewItems != 0 {
+		t.Errorf("second new_items = %d, want 0", env2.NewItems)
+	}
+	if env2.Deduped != 2 {
+		t.Errorf("second deduped = %d, want 2", env2.Deduped)
 	}
 }

@@ -10,15 +10,19 @@ import (
 )
 
 // PollFailure is one failed feed in the poll envelope: the feed URL, its error
-// category, and the HTTP status when the category is http (omitted otherwise).
+// category, the HTTP status when the category is http (omitted otherwise), and
+// the bare human detail of the failure (always present).
 type PollFailure struct {
 	FeedURL  string        `json:"feed_url"`
 	Category core.Category `json:"category"`
 	Status   int           `json:"status,omitempty"`
+	Message  string        `json:"message"`
 }
 
 // PollResult is the poll stdout envelope: how many feeds were polled, succeeded,
-// failed, and skipped, the count of newly-seen items, the items themselves, one
+// failed, and skipped, the count of items parsed from the wire (fetched), the
+// count of newly-seen items (new_items), the count of wire items that were
+// already known (deduped = fetched - new_items), the items themselves, one
 // entry per failed feed, and one entry per feed renamed by a permanent redirect.
 // failures and renamed are always present, empty ([]) when nothing failed or was
 // renamed, so a partial failure or a feed identity change is observable from
@@ -29,8 +33,10 @@ type PollResult struct {
 	Succeeded int               `json:"succeeded"`
 	Failed    int               `json:"failed"`
 	Skipped   int               `json:"skipped"`
+	Fetched   int               `json:"fetched"`
 	NewItems  int               `json:"new_items"`
-	Items     []core.Item       `json:"items" jsonschema:"opaque"`
+	Deduped   int               `json:"deduped"`
+	Items     []core.Item       `json:"items"`
 	Failures  []PollFailure     `json:"failures"`
 	Renamed   []core.FeedRename `json:"renamed"`
 }
@@ -88,37 +94,22 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 
 	result, feedErrs, err := poll.Run(ctx, pd, cmd.Args().Slice(), cmd.Bool("force"))
 	if err != nil {
+		// result.Polled > 0 distinguishes a mid-persist failure (some feeds'
+		// writes already committed) from an early hard failure such as an
+		// unreachable store, where stdout must stay empty.
+		if result.Polled > 0 {
+			_ = r.Result(shapePollResult(result, feedErrs))
+		}
 		return err
 	}
 
-	failures := make([]PollFailure, 0, len(feedErrs))
-	for _, fe := range feedErrs {
-		failures = append(failures, PollFailure{
-			FeedURL:  fe.FeedURL,
-			Category: fe.Category,
-			Status:   fe.Status,
-		})
-	}
-
-	renamed := make([]core.FeedRename, 0, len(result.Renamed))
-	renamed = append(renamed, result.Renamed...)
-
-	if err := r.Result(PollResult{
-		Polled:    result.Polled,
-		Succeeded: result.Polled - result.Failed,
-		Failed:    result.Failed,
-		Skipped:   result.Skipped,
-		NewItems:  result.NewItems,
-		Items:     result.Items,
-		Failures:  failures,
-		Renamed:   renamed,
-	}); err != nil {
+	if err := r.Result(shapePollResult(result, feedErrs)); err != nil {
 		return err
 	}
 
-	if len(renamed) > 0 {
+	if len(result.Renamed) > 0 {
 		loggerFrom(ctx).InfoContext(ctx, "renamed feeds after permanent redirect",
-			"count", len(renamed))
+			"count", len(result.Renamed))
 	}
 
 	if len(feedErrs) > 0 {
@@ -131,4 +122,35 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 		return exitError{code: code}
 	}
 	return nil
+}
+
+// shapePollResult builds the stdout envelope from a poll outcome and its
+// per-feed errors, shared by the success and mid-persist-failure paths so
+// they cannot drift.
+func shapePollResult(result poll.Result, feedErrs []*core.FeedError) PollResult {
+	failures := make([]PollFailure, 0, len(feedErrs))
+	for _, fe := range feedErrs {
+		failures = append(failures, PollFailure{
+			FeedURL:  fe.FeedURL,
+			Category: fe.Category,
+			Status:   fe.Status,
+			Message:  fe.Detail(),
+		})
+	}
+
+	renamed := make([]core.FeedRename, 0, len(result.Renamed))
+	renamed = append(renamed, result.Renamed...)
+
+	return PollResult{
+		Polled:    result.Polled,
+		Succeeded: result.Polled - result.Failed,
+		Failed:    result.Failed,
+		Skipped:   result.Skipped,
+		Fetched:   result.Fetched,
+		NewItems:  result.NewItems,
+		Deduped:   result.Deduped,
+		Items:     result.Items,
+		Failures:  failures,
+		Renamed:   renamed,
+	}
 }

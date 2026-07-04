@@ -68,6 +68,20 @@ func (e *FeedError) Error() string {
 // chain.
 func (e *FeedError) Unwrap() error { return e.Err }
 
+// Detail returns the bare human detail of the error: the explicit Message,
+// falling back to the wrapped cause. It omits the category, feed URL, and
+// status head that Error() prepends, for callers that carry those as
+// structured fields already.
+func (e *FeedError) Detail() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Err != nil {
+		return e.Err.Error()
+	}
+	return ""
+}
+
 // NetworkErr builds a feed-scoped network-category error wrapping cause.
 func NetworkErr(url string, err error) *FeedError {
 	return &FeedError{FeedURL: url, Category: CatNetwork, Err: err}

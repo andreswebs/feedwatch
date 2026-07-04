@@ -678,6 +678,28 @@ func TestItemsOmittedNoDateFetchAxisUnaffected(t *testing.T) {
 	}
 }
 
+// TestItemsFieldsErrorListsValidFields covers that a usage error for an unknown
+// --fields value always includes the "valid fields:" prefix and at least one
+// known field name, so the caller never needs a separate round-trip to discover
+// valid names (fee-6ol6).
+func TestItemsFieldsErrorListsValidFields(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	res := runItems(t, st, clk, "--fields", "published")
+	if !res.exited || res.code != 1 {
+		t.Fatalf("--fields published should exit 1, got exited=%v code=%d", res.exited, res.code)
+	}
+	msg := errorMessage(t, res.err)
+	if !strings.Contains(msg, "valid fields:") {
+		t.Errorf("error message missing 'valid fields:': %q", msg)
+	}
+	if !strings.Contains(msg, "published_at") {
+		t.Errorf("error message missing 'published_at' in field list: %q", msg)
+	}
+}
+
 // TestItemsNullOrderingHonest covers Req 3 ordering: a null-publication item
 // sorts last under publication desc and first under publication asc, with no
 // fetch-time substitution.

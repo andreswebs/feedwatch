@@ -1,6 +1,6 @@
 ---
 id: fee-oyw2
-status: open
+status: closed
 deps: [fee-udsl]
 links: []
 created: 2026-07-04T12:21:07Z
@@ -117,3 +117,9 @@ In `src/internal/poll` (unit) and `src/internal/cli` (envelope):
 - `docs/usage.md` and `docs/cli-design.md` document the partial-envelope
   contract.
 - `make build` passes.
+
+## Notes
+
+**2026-07-04T15:26:52Z**
+
+Implemented: poll.Run now returns a partial Result alongside a mid-persist error, built via the new orderedItems() helper shared with the success path. pollAction writes the stdout envelope (via new shapePollResult()) before propagating the hard error when result.Polled > 0, distinguishing a mid-persist failure from an early hard failure (store open, unknown named feed) where stdout stays empty. Exit code remains 1 in both hard-failure cases. Added testsupport.FailingUpsertStore (wraps store.Store, fails UpsertItems for a chosen feed URL) to simulate the failure in poll and cli package tests. Updated docs/usage.md and docs/cli-design.md to document that poll's exit 1 may carry a partial envelope. make build passes.

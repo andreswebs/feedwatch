@@ -2,6 +2,7 @@ package cli
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/andreswebs/feedwatch/internal/core"
 )
@@ -13,12 +14,14 @@ import (
 const suggestMaxDistance = 2
 
 // unknownFieldMessage builds the --fields usage error for an unrecognized name,
-// appending a did-you-mean suggestion when a valid field is a close match.
+// appending a did-you-mean suggestion when a valid field is a close match, then
+// always appending the full list of valid field names.
 func unknownFieldMessage(name string) string {
 	msg := "--fields: unknown field " + strconv.Quote(name)
 	if s, ok := nearestField(name); ok {
 		msg += "; did you mean " + strconv.Quote(s) + "?"
 	}
+	msg += "; valid fields: " + strings.Join(core.ItemFieldNames(), ", ")
 	return msg
 }
 

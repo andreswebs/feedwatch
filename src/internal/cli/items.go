@@ -19,7 +19,7 @@ import (
 // counts items a publication-axis date window excluded for a null publication
 // time.
 type ItemsResult struct {
-	Items         []core.Item `json:"items" jsonschema:"opaque"`
+	Items         []core.Item `json:"items"`
 	OmittedNoDate int         `json:"omitted_no_date,omitempty"`
 }
 
@@ -49,7 +49,7 @@ func (d Deps) itemsCommand() *cliv3.Command {
 			&cliv3.StringFlag{Name: "order", Value: "published desc", Usage: "sort: 'published|fetched asc|desc'"},
 			&cliv3.StringFlag{Name: "time-field", Value: "published", Usage: "axis for --since/--until: 'published' or 'fetched'"},
 			&cliv3.StringFlag{Name: "contains", Usage: "substring matched over title and content"},
-			&cliv3.StringSliceFlag{Name: "fields", Usage: "project to a subset of item fields; full item when omitted"},
+			&cliv3.StringSliceFlag{Name: "fields", Usage: "project to a subset of item fields (" + strings.Join(core.ItemFieldNames(), ", ") + "); full item when omitted"},
 		},
 		Action: d.itemsAction,
 	}

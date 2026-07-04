@@ -39,20 +39,31 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
 - stderr carries structured JSON log lines and structured error objects. This
   keeps stdout clean, so piping it into `jq` never trips over a diagnostic.
 - A hard, whole-invocation failure (bad arguments, unreachable store) writes a
-  single JSON error object to stderr and nothing to stdout.
+  single JSON error object to stderr and nothing to stdout. An exception is a
+  `poll` that fails partway through persisting fetched feeds: the envelope for
+  the feeds already persisted is still written to stdout (see `poll` below),
+  since that work is durable and would otherwise never be reported.
 - Per-feed failures during a poll are reported on both streams. The stdout
   envelope carries `succeeded` and `failed` counts and a `failures` list whose
   entries hold the feed URL, an error `category` (`network`, `http`, `parse`,
-  `timeout`), and an HTTP `status` (present only for `http` failures, omitted
-  otherwise), so a partial failure is triageable from stdout alone. stderr adds
-  the full per-feed detail, including the human-readable message.
+  `timeout`), a `message` with the underlying error detail (always present), and
+  an HTTP `status` (present only for `http` failures, omitted otherwise), so a
+  partial failure is fully triageable from stdout alone without parsing stderr.
+  `timeout` is its own `category`, so an agent need not inspect `message` to
+  distinguish a timeout from other network errors. stderr adds structured
+  per-feed objects with the same detail.
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
-# stdout: {"polled":3,"succeeded":2,"failed":1,"skipped":0,"new_items":2,
-#          "items":[...],"failures":[{"feed_url":"...","category":"http","status":404}]}
+# stdout: {"polled":3,"succeeded":2,"failed":1,"skipped":0,"fetched":10,"new_items":2,"deduped":8,
+#          "items":[...],
+#          "failures":[{"feed_url":"...","category":"http","status":404,"message":"server returned HTTP 404"},
+#                      {"feed_url":"...","category":"network","message":"dial tcp: connection refused"}],
+#          "renamed":[]}
 # err.json: {"errors":[{"feed_url":"...","category":"http","status":404,
-#                       "message":"server returned HTTP 404"}]}
+#                       "message":"server returned HTTP 404"},
+#                      {"feed_url":"...","category":"network",
+#                       "message":"dial tcp: connection refused"}]}
 # exit=3
 ```
 
@@ -76,6 +87,14 @@ Distinct exit codes let an agent branch on the outcome without parsing output.
 Codes 2 and 3 are produced only by commands that target feeds (notably `poll`).
 Commands without a per-feed outcome use 0 for success and 1 for a usage or
 configuration error.
+
+Exit 1 from `poll` can carry a partial envelope on stdout: when a store write
+fails partway through persisting fetched feeds, the feeds already persisted
+before the failure are still reported (`new_items`/`items` cover exactly that
+subset), and the process still exits 1. An early hard failure (unreachable
+store, unknown named feed) leaves stdout empty, as before. A consumer of
+`poll` should process stdout even on exit 1, since it is not necessarily
+empty.
 
 ## Global flags
 
@@ -168,19 +187,69 @@ Modified`.
 
 The envelope reports the per-feed outcome: `polled` feeds attempted (with the
 invariant `polled == succeeded + failed`), `skipped` feeds left unpolled because
-they were not due, `new_items`, the `items` themselves, and a `failures` list
-(always present, empty when no feed failed) with one `{feed_url, category,
-status?}` entry per failed feed.
+they were not due, `fetched` items parsed across all successful 200 responses
+(304 Not Modified responses contribute 0), `new_items` items stored for the
+first time, `deduped` items already known (`deduped = fetched - new_items`), the
+`items` themselves, and a `failures` list (always present, empty when no feed
+failed) with one `{feed_url, category, message, status?}` entry per failed feed.
+`message` carries the underlying error detail and is always present. `status` is
+only present for `http` failures. `timeout` is a distinct `category`; no
+`message` parsing is needed to distinguish a timeout from other network errors.
 
 Options:
 
 - `--force`, `--all` - poll every active feed, ignoring the schedule.
 
+A hard failure while persisting a fetched feed (a store write error) aborts the
+run and exits 1, but the envelope for feeds already persisted before the
+failure is still written to stdout, since that work is durable; a retry
+reports the remaining feeds as new. An early hard failure (before any feed is
+fetched, such as an unreachable store or an unknown named feed) leaves stdout
+empty.
+
 ```sh
 feedwatch poll          # only due feeds
-# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"new_items":4,"items":[...],"failures":[]}
+# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"fetched":4,"new_items":4,"deduped":0,"items":[...],"failures":[]}
 feedwatch poll          # immediately again
-# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"new_items":0,"items":[],"failures":[]}
+# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[]}
+```
+
+### `check [feed...]`
+
+Validate feed reachability and parseability without storing items or updating
+any state. With no arguments every active feed is checked; named feeds (by URL
+or alias) restrict the run to those feeds. Disabled feeds can be checked when
+named explicitly.
+
+Each feed is fetched with an unconditional GET (no `If-None-Match` or
+`If-Modified-Since` validators; a 304 would prove nothing about parseability)
+and the response body is parsed with the shared parser. No items are stored, no
+ETags or schedule timestamps are written, and the failure-lifecycle counters are
+not updated. The command is read-only from the store's perspective.
+
+The envelope reports `checked` feeds attempted, `ok` feeds that fetched and
+parsed cleanly, `failed` feeds that did not, and a `failures` list (always
+present, empty when no feed failed) with one `{feed_url, category, message,
+status?}` entry per failed feed -- the same shape as the poll failures list.
+
+Exit codes mirror `poll`:
+
+- 0: all checked feeds passed (or nothing to check)
+- 1: usage or configuration error (unknown ref, unreachable store)
+- 2: all checked feeds failed
+- 3: partial -- some feeds passed and some failed
+
+```sh
+feedwatch check
+# {"checked":3,"ok":3,"failed":0,"failures":[]}
+feedwatch check https://dead.example/feed.xml
+# {"checked":1,"ok":0,"failed":1,"failures":[{"feed_url":"...","category":"network","message":"..."}]}
+```
+
+Typical use as a cron health check after `import --no-validate`:
+
+```sh
+*/60 * * * * feedwatch check >> ~/check-results.jsonl 2>> ~/feedwatch.log
 ```
 
 ### `items`
@@ -212,8 +281,10 @@ Options:
   result carries exactly the requested fields plus the always-on `feed_url`
   identity field. Naming `feed_url` itself is accepted as a no-op, since it is
   emitted regardless. An unknown field name is a usage error (exit 1) that
-  returns no partial results; when it closely resembles a valid field, the error
-  includes a did-you-mean suggestion.
+  returns no partial results; the error message lists all valid field names, and
+  when the unknown name closely resembles a valid field, the error also includes
+  a did-you-mean suggestion. `published_at` and `updated_at` are nullable
+  (`null` when unparseable); `fetched_at` is always present.
 
 ```sh
 feedwatch items --feed godev --since 7d --limit 50

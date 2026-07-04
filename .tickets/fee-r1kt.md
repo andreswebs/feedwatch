@@ -1,6 +1,6 @@
 ---
 id: fee-r1kt
-status: open
+status: closed
 deps: []
 links: [fee-8klp]
 created: 2026-07-04T12:21:07Z
@@ -136,3 +136,9 @@ patterns:
 - Registered in `root.go` and `schemaRegistry`; covered by tests above.
 - `docs/usage.md` and manual QA plan updated.
 - `make build` passes.
+
+## Notes
+
+**2026-07-04T15:53:42Z**
+
+Implemented feedwatch check command in src/internal/cli/check.go. Uses errgroup bounded by cfg.Concurrency for concurrent fetch+parse with position-indexed result slots. Unconditional GET (no ETag/LastModified in FetchRequest) so 304s cannot mask real parse failures. Zero store writes: no UpsertItems, RecordSuccess, or RecordFailure calls. checkFeedError extracts *core.FeedError via errors.As, falling back to core.NetworkErr. CheckResult.ExitCode() mirrors poll.Result.ExitCode(). Registered in root.go commands() after pollCommand and in schemaRegistry with checkExitCodes(). 8 CLI-level tests cover all behaviors. Docs: added check section to docs/usage.md and TC-CHECK-001 through TC-CHECK-004 to manual-qa.md.

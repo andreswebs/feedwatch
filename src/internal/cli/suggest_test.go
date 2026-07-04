@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNearestField(t *testing.T) {
 	cases := []struct {
@@ -28,6 +31,33 @@ func TestNearestField(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestUnknownFieldMessage covers that the error message always appends the full
+// valid field list, and still includes the did-you-mean when a close match exists.
+func TestUnknownFieldMessage(t *testing.T) {
+	t.Run("far field includes valid list but no did-you-mean", func(t *testing.T) {
+		msg := unknownFieldMessage("published")
+		if !strings.Contains(msg, "valid fields:") {
+			t.Errorf("message missing 'valid fields:': %q", msg)
+		}
+		if !strings.Contains(msg, "published_at") {
+			t.Errorf("message missing 'published_at' in field list: %q", msg)
+		}
+		if strings.Contains(msg, "did you mean") {
+			t.Errorf("message should not have did-you-mean for distance-3 input, got: %q", msg)
+		}
+	})
+
+	t.Run("near typo includes both did-you-mean and valid list", func(t *testing.T) {
+		msg := unknownFieldMessage("tilte")
+		if !strings.Contains(msg, "did you mean") {
+			t.Errorf("message missing did-you-mean for close typo: %q", msg)
+		}
+		if !strings.Contains(msg, "valid fields:") {
+			t.Errorf("message missing 'valid fields:': %q", msg)
+		}
+	})
 }
 
 // nearestField must be deterministic across repeated calls, including when more

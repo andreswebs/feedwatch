@@ -66,6 +66,7 @@ func (d Deps) commands() []*cliv3.Command {
 	return []*cliv3.Command{
 		d.migrateCommand(),
 		d.pollCommand(),
+		d.checkCommand(),
 		d.addCommand(),
 		d.listCommand(),
 		d.rmCommand(),

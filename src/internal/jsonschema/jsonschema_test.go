@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/andreswebs/feedwatch/internal/jsonschema"
 )
@@ -142,6 +143,49 @@ func TestOneOf(t *testing.T) {
 	}
 	if string(p.OneOf[0]) != string(a) || string(p.OneOf[1]) != string(b) {
 		t.Errorf("oneOf did not preserve its alternatives in order: %s", p.OneOf)
+	}
+}
+
+// parsedFull decodes both the Type field and Format, for asserting on time schemas.
+type parsedFull struct {
+	Type   json.RawMessage            `json:"type"`
+	Format string                     `json:"format"`
+	Props  map[string]json.RawMessage `json:"properties"`
+	Items  json.RawMessage            `json:"items"`
+}
+
+func decodeFull(t *testing.T, raw json.RawMessage) parsedFull {
+	t.Helper()
+	var p parsedFull
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("schema is not valid JSON: %v\ngot: %s", err, raw)
+	}
+	return p
+}
+
+// TestReflectTimeFields covers that time.Time reflects as a date-time string
+// and *time.Time reflects as a nullable date-time (type array or plain string
+// with null allowed), both carrying format:"date-time".
+func TestReflectTimeFields(t *testing.T) {
+	type holder struct {
+		At    time.Time  `json:"at"`
+		MayAt *time.Time `json:"may_at"`
+	}
+
+	p := decodeFull(t, jsonschema.Reflect(holder{}))
+
+	at := decodeFull(t, p.Props["at"])
+	if at.Format != "date-time" {
+		t.Errorf("time.Time format = %q, want date-time", at.Format)
+	}
+	var atType string
+	if err := json.Unmarshal(at.Type, &atType); err != nil || atType != "string" {
+		t.Errorf("time.Time type = %s, want \"string\"", at.Type)
+	}
+
+	mayAt := decodeFull(t, p.Props["may_at"])
+	if mayAt.Format != "date-time" {
+		t.Errorf("*time.Time format = %q, want date-time", mayAt.Format)
 	}
 }
 

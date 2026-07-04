@@ -11,12 +11,14 @@ import (
 
 // pollTotals aggregates the consumed outcomes for the output stage. polled is
 // the number of feeds fetched (including those that failed); failed is the
-// subset that errored; newItems is the total count of newly-seen items, indexed
-// per feed in newByFeed. The count of feeds skipped as not-due is not derivable
-// from outcomes (those feeds are never fetched); the output-shaping stage adds
-// it from the selection result.
+// subset that errored; fetched is the total items parsed across 200 responses
+// (304s contribute 0); newItems is the count of those items stored for the
+// first time. The count of feeds skipped as not-due is not derivable from
+// outcomes (those feeds are never fetched); the output-shaping stage adds it
+// from the selection result.
 type pollTotals struct {
 	polled    int
+	fetched   int
 	newItems  int
 	failed    int
 	newByFeed map[string][]core.Item
@@ -49,6 +51,9 @@ func consume(ctx context.Context, d Deps, outcomes []feedOutcome) (pollTotals, [
 			continue
 		}
 
+		if !oc.result.NotModified {
+			totals.fetched += len(oc.parsed.Items)
+		}
 		newItems, renamedTo, err := d.consumeSuccess(ctx, oc)
 		if err != nil {
 			return totals, feedErrs, err

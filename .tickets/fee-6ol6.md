@@ -1,6 +1,6 @@
 ---
 id: fee-6ol6
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T12:21:07Z
@@ -131,3 +131,9 @@ tags (`id`, `title`, `link`, `summary`, `content_html`, `content_text`,
 - `docs/usage.md` items section documents the field list and nullability of
   `published_at`/`updated_at`.
 - `make build` passes.
+
+## Notes
+
+**2026-07-04T15:42:39Z**
+
+Implemented three independent improvements: (1) unknownFieldMessage in suggest.go now appends the full valid field list after any did-you-mean suggestion, fixing the distance-3 case where 'published -> published_at' produced no hint at all. (2) The --fields flag usage string in items.go is now built from core.ItemFieldNames() so --help always enumerates the fields. (3) Removed jsonschema:"opaque" from ItemsResult.Items and PollResult.Items so schema items/poll now fully documents the item shape including date-time strings; added time.Time/(*time.Time) special-casing to the jsonschema reflector (format:"date-time", nullable pointer type ["string","null"]). ProjectedItemsResult.Items retains opaque because its per-element shape is caller-projected. Updated docs/usage.md to document published_at/updated_at nullability.

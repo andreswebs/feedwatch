@@ -47,6 +47,16 @@ func pollExitCodes() map[string]string {
 	}
 }
 
+// checkExitCodes mirrors pollExitCodes for the check command.
+func checkExitCodes() map[string]string {
+	return map[string]string{
+		"0": "all checked feeds passed (or nothing to check)",
+		"1": "usage or configuration error",
+		"2": "all checked feeds failed",
+		"3": "partial: some feeds passed and some failed",
+	}
+}
+
 // schemaRegistry maps each command to its exit codes and output JSON Schema.
 // The flag and argument halves of a command's contract are introspected from
 // the live tree; only these two fields are hand-maintained here.
@@ -58,6 +68,7 @@ func pollExitCodes() map[string]string {
 var schemaRegistry = map[string]cmdMeta{
 	"migrate":  {exitCodes: defaultExitCodes(), output: jsonschema.OneOf(jsonschema.Reflect(MigrateApplied{}), jsonschema.Reflect(MigrateStatus{}))},
 	"poll":     {exitCodes: pollExitCodes(), output: jsonschema.Reflect(PollResult{})},
+	"check":    {exitCodes: checkExitCodes(), output: jsonschema.Reflect(CheckResult{})},
 	"add":      {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(AddResult{})},
 	"list":     {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(ListResult{})},
 	"rm":       {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(RmResult{})},

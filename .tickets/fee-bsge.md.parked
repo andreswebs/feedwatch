@@ -17,9 +17,9 @@ Implement a PostgreSQL backend for the Store interface (pgx, no CGO), selected b
 
 ## Design
 
-A PostgreSQL backend for the `Store` interface, selected when `FEEDWATCH_DB` is a
-`postgres://` DSN. Deferred (P3): not required for the first milestone; build
-behind the interface and implement later.
+A PostgreSQL backend for the `Store` interface, selected via `FEEDWATCH_DB`.
+Deferred (P3): not required for the first milestone; build behind the
+interface and implement later.
 
 ```go
 // src/internal/store/postgres
@@ -29,10 +29,55 @@ func Open(dsn string, opts ...Option) (*Store, error) // implements store.Store
 
 - Same logical schema as SQLite; migration SQL kept portable, with dialect
   differences (e.g. `ON CONFLICT`, timestamp types) handled behind the interface.
-- The DSN scheme in `FEEDWATCH_DB` selects this backend over SQLite.
 - Times stored as `timestamptz` (UTC); JSON columns as `jsonb`.
 - The tombstone/prune, dedup upsert, and due-feed semantics match the SQLite
   store so the `Store` contract tests run against both backends.
+
+### Backend selection
+
+`FEEDWATCH_DB` selects this backend (case-insensitive) when it is:
+
+- a full DSN with scheme `postgres://` or `postgresql://` (including the
+  bare-scheme form with no host/path, e.g. `postgres://`), or
+- the bare literal `postgres` or `postgresql` (no `://`, nothing else).
+
+Anything else falls through to the existing SQLite path/default handling,
+unchanged. This dispatch logic is the only thing feedwatch owns; it does not
+parse or validate connection fields itself.
+
+### Connection configuration: delegate to pgx, respect `PG*` env vars
+
+The `FEEDWATCH_DB` value (or `""` for the bare-literal form) is passed
+directly to `pgx.ParseConfig` / `pgconn.ParseConfig`. No custom merge or
+precedence logic is implemented in feedwatch:
+
+- DSN fields present in `FEEDWATCH_DB` win.
+- Standard libpq/`psql` `PG*` environment variables (`PGHOST`, `PGPORT`,
+  `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PGSSLMODE`, `PGPASSFILE`, `PGSERVICE`,
+  `PGSERVICEFILE`, `PGSSLCERT`/`PGSSLKEY`/`PGSSLROOTCERT`,
+  `PGCONNECT_TIMEOUT`, etc.) fill in any field left unset by the DSN, exactly
+  as pgx/libpq already behaves.
+- pgx's own built-in defaults (e.g. `localhost:5432`, OS username) fill
+  anything still unset.
+- No allowlist or enumeration of supported `PG*` vars is maintained by
+  feedwatch; whatever pgx/libpq supports works. Docs point to libpq's env var
+  reference rather than duplicating it, to avoid drift.
+- No pre-flight validation that "enough" fields are set (e.g. requiring
+  `PGHOST`). A resulting connection failure surfaces as pgx's own error,
+  wrapped with feedwatch's normal error context (which `FEEDWATCH_DB` value
+  was used).
+
+### Testing
+
+- A table-driven unit test covers only the dispatch function: `postgres://...`,
+  `postgresql://...`, `postgres`, `POSTGRESQL` (mixed case), empty string,
+  SQLite path, and garbage input each resolve to the correct backend choice or
+  error.
+- No unit test re-verifies pgx's own `PG*` merge/precedence behavior; that is
+  pgx's responsibility and out of scope here.
+- The `Store` contract-test suite (below) continues to exercise real
+  connections against a live Postgres instance, incidentally covering
+  `PG*`-based DSNs as one way the test instance's connection is supplied.
 
 TDD plan (against a Postgres test instance, e.g. via a CI service container or
 `dockertest`; skipped when unavailable):

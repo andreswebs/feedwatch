@@ -1,6 +1,6 @@
 ---
 id: fee-8klp
-status: open
+status: closed
 deps: []
 links: [fee-r1kt]
 created: 2026-07-04T12:21:07Z
@@ -112,3 +112,9 @@ contract, drops it.
 - Detail logic is shared via `FeedError.Detail()`, not duplicated.
 - `docs/usage.md` updated.
 - `make build` passes.
+
+## Notes
+
+**2026-07-04T15:47:05Z**
+
+Added Detail() method on *core.FeedError in core/errors.go (prefers Message, falls back to Err.Error(), returns empty for neither). Added Message string field to PollFailure in cli/poll.go, populated via fe.Detail() in shapePollResult. Updated two e2e golden files (all_failed/poll.stdout, partial/poll.stdout) to include the message field. Updated docs/usage.md to document message in the failures[] contract and show a two-failure example. Note for fee-r1kt: Detail() helper already exists in core.FeedError.

@@ -235,7 +235,13 @@ the exit code is derived:
 
 - A non-nil error is a hard, whole-invocation failure (usage, configuration, or
   an unreachable or too-new store) and maps to exit 1. No result is written to
-  stdout; a single structured error object is written to stderr.
+  stdout; a single structured error object is written to stderr. The one
+  exception is `poll`: a store write that fails partway through persisting
+  fetched feeds still maps to exit 1, but the envelope covering the feeds
+  already persisted before the failure is written to stdout first, since that
+  work is durable and would otherwise never be reported (`result.Polled > 0`
+  distinguishes this mid-persist case from an early hard failure, where stdout
+  stays empty).
 - A nil error means the envelope is written to stdout, and the exit code is
   derived from the envelope's per-feed outcome summary: 0 when all targeted
   feeds succeeded, 2 when all failed, and 3 when some succeeded and some failed.
