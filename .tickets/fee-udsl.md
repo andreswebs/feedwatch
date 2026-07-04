@@ -1,6 +1,6 @@
 ---
 id: fee-udsl
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-04T12:21:07Z

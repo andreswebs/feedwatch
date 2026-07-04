@@ -2,17 +2,45 @@ package poll
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/andreswebs/feedwatch/internal/core"
 )
 
-// persistGrace bounds the persistence stage when the poll context has been
-// cancelled by an interrupt. Persisting the feeds that already completed runs on
-// a context detached from the signal so the writes are not aborted, but the
-// detached context still carries this deadline so an interrupted poll cannot
-// hang on an unresponsive store.
-const persistGrace = 5 * time.Second
+// persistGrace bounds how long persistence may continue *after* an interrupt
+// before it is aborted, not the persistence stage as a whole. An uninterrupted
+// run's persistence has no deadline; the grace starts ticking only once the
+// poll context is cancelled, so an interrupted poll cannot hang on an
+// unresponsive store while completed work is flushed. It is a var, not a
+// const, so tests can shrink it and avoid a multi-second sleep.
+var persistGrace = 5 * time.Second
+
+// graceAfterCancel returns a context detached from parent's cancellation, plus
+// a stop func that must be deferred. While parent is live the returned context
+// has no deadline. Once parent is cancelled (an interrupt), the returned
+// context is cancelled grace later, so persistence of already-completed work
+// still cannot hang on an unresponsive store.
+func graceAfterCancel(parent context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+	stopped := make(chan struct{})
+	var once sync.Once
+	stop := func() { once.Do(func() { close(stopped) }); cancel() }
+	go func() {
+		select {
+		case <-parent.Done():
+			t := time.NewTimer(grace)
+			defer t.Stop()
+			select {
+			case <-t.C:
+				cancel()
+			case <-stopped:
+			}
+		case <-stopped:
+		}
+	}()
+	return ctx, stop
+}
 
 // Result is the outcome summary of a poll run, ready for the output stage.
 // Polled counts the feeds fetched (successes and failures); Skipped counts the
@@ -60,11 +88,12 @@ func Run(ctx context.Context, d Deps, names []string, force bool) (Result, []*co
 
 	// orchestrate keeps the cancellable ctx so an interrupt stops it from
 	// scheduling new fetches. Persisting the feeds it already fetched runs on a
-	// context detached from the signal (with a grace deadline), so an interrupt
-	// mid-poll still durably records the completed work instead of aborting it
-	// with a context-canceled store write.
+	// context detached from the signal, unbounded unless that signal fires, so a
+	// successful uninterrupted run is never aborted by an arbitrary deadline and
+	// an interrupt mid-poll still durably records the completed work instead of
+	// aborting it with a context-canceled store write.
 	outcomes := orchestrate(ctx, d, feeds)
-	persistCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), persistGrace)
+	persistCtx, stop := graceAfterCancel(ctx, persistGrace)
 	defer stop()
 	totals, feedErrs, err := consume(persistCtx, d, outcomes)
 	if err != nil {

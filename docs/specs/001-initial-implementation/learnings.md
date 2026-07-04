@@ -1659,3 +1659,38 @@ context.Canceled|DeadlineExceeded)` now maps to `CatTimeout` instead of falling
   130/143, completed-feed items queryable, and no `"category":"internal"` on
   stderr. `import` seeds the slow feed without blocking (it calls `AddFeed`
   directly and never fetches), unlike `add`.
+
+## fee-udsl — poll: unconditional 5s persistence deadline can abort a successful poll
+
+- **fee-fz8p's fix (above) was itself the bug**, just dormant until scale
+  exposed it: `context.WithTimeout(context.WithoutCancel(ctx), persistGrace)`
+  applies the 5s deadline unconditionally, from the moment persistence starts,
+  not from the moment of an interrupt. A normal, uninterrupted run at customer
+  scale (133 feeds, 5,335 items, one transaction per feed) can take longer than
+  5s to persist on slow storage, so the deadline fires mid-`consume`, `Run`
+  returns a hard error, and the items already committed per-feed before the
+  expiry are stranded: stored, but absent from the envelope and from
+  `new_items`.
+- **Fix separates "has an interrupt happened" from "how long since it
+  happened."** `graceAfterCancel(parent, grace)` returns a context that mirrors
+  `parent` while it is live (no deadline at all) and only starts a `grace`
+  countdown once `parent.Done()` fires, via a watcher goroutine race between the
+  parent's cancellation and an explicit `stop()`. `context.WithTimeout` has no
+  way to express "no deadline until X happens," so this couldn't be built from
+  stdlib context constructors alone.
+- `persistGrace` changed from a `const` to a package `var` specifically so
+  `TestGraceAfterCancelCancelsAfterGraceOnParentCancel`-style tests can shrink
+  it to milliseconds; a `Deps` field was the other option the ticket allowed but
+  would have forced every existing `poll.Deps{...}` literal (there's only the
+  one in `cli/poll.go`, but more may come) to reason about a zero-value grace
+  meaning "cancel immediately," which is exactly the bug being fixed.
+- **The existing interrupt test needed no changes.** `graceAfterCancel`
+  preserves the observable behavior `TestRunInterruptPersistsCompletedFeeds`
+  depends on (persistence survives cancellation, bounded eventually) — only the
+  *un*interrupted path's behavior changed.
+- **e2e regression seam**: spreading N feeds across N distinct `httptest`
+  servers (one host each), not N paths on one server, matters for reasons
+  beyond the fee-fz8p per-host-grouping issue — `PerHostDelay` (1s default)
+  serializes same-host requests, so 20 feeds on one host made the test take
+  ~19s for a reason unrelated to what it verifies. Per-host servers cut it to
+  well under a second.

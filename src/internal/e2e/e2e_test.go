@@ -2,6 +2,7 @@ package e2e_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreswebs/feedwatch/internal/cli"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -120,6 +122,29 @@ func (h harness) run(golden string, wantExit int, args ...string) {
 
 	checkGolden(h.t, golden+".stdout", normalize(out.Bytes(), h.base))
 	checkGolden(h.t, golden+".stderr", normalize(errb.Bytes(), h.base))
+}
+
+// runJSON invokes the binary like run, but instead of golden-diffing stdout it
+// asserts the exit code and decodes stdout as JSON into v. It is for scenarios
+// where the response is too large or too input-dependent (e.g. many feeds) for
+// a pinned golden to be practical.
+func (h harness) runJSON(v any, wantExit int, args ...string) {
+	h.t.Helper()
+
+	full := append([]string{"--quiet", "--db", h.db}, args...)
+	//nolint:gosec // G204: the suite runs the binary it just built with test-controlled args.
+	cmd := exec.Command(binPath, full...)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	err := cmd.Run()
+
+	if code := exitCodeOf(err); code != wantExit {
+		h.t.Fatalf("exit code = %d, want %d\nstdout: %s\nstderr: %s", code, wantExit, out.String(), errb.String())
+	}
+	if err := json.Unmarshal(out.Bytes(), v); err != nil {
+		h.t.Fatalf("decode stdout as JSON: %v\nstdout: %s", err, out.String())
+	}
 }
 
 // exitCodeOf extracts a process exit code from a *exec.ExitError, returning 0
@@ -284,4 +309,57 @@ func TestImportExportPrune(t *testing.T) {
 	h.run("opml/poll", 0, "poll", "--force")
 	h.run("opml/export", 0, "export")
 	h.run("opml/prune", 0, "prune", "--max-items", "1")
+}
+
+// TestFirstPollReportsAllNewItems is the customer regression for fee-udsl: a
+// first poll across many feeds must report every stored item as new, never
+// new_items=0 with items[] empty while the store nonetheless holds them. It
+// decodes JSON rather than golden-diffing, since the response scales with the
+// feed count and per-feed URLs are not worth normalizing into a pinned golden.
+func TestFirstPollReportsAllNewItems(t *testing.T) {
+	const numFeeds = 20
+	const itemsPerFeed = 2
+
+	// Each feed gets its own httptest server (its own host:port), not one server
+	// with many paths: poll applies a per-host politeness delay between
+	// same-host requests, so sharing one host would serialize all 20 fetches
+	// and make the test take ~20s for no reason relevant to what it verifies.
+	var opml strings.Builder
+	opml.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+	opml.WriteString(`<opml version="2.0"><head><title>subs</title></head><body>` + "\n")
+	for i := range numFeeds {
+		srv := testsupport.NewFeedServer()
+		t.Cleanup(srv.Close)
+		srv.Register("/feed.xml", testsupport.Endpoint{Body: rssFeed})
+		fmt.Fprintf(&opml, `<outline text="feed%d" type="rss" xmlUrl="%s"/>`+"\n", i, srv.URL("/feed.xml"))
+	}
+	opml.WriteString(`</body></opml>`)
+
+	opmlPath := filepath.Join(t.TempDir(), "subs.opml")
+	if err := os.WriteFile(opmlPath, []byte(opml.String()), 0o600); err != nil {
+		t.Fatalf("write opml: %v", err)
+	}
+
+	h := newHarness(t, "")
+	h.run("first_poll/import", 0, "import", opmlPath, "--no-validate")
+
+	var poll cli.PollResult
+	h.runJSON(&poll, 0, "poll", "--force")
+
+	wantItems := numFeeds * itemsPerFeed
+	if poll.Polled != numFeeds || poll.Failed != 0 {
+		t.Fatalf("poll: polled=%d failed=%d, want polled=%d failed=0", poll.Polled, poll.Failed, numFeeds)
+	}
+	if poll.NewItems != wantItems {
+		t.Fatalf("poll: new_items=%d, want %d", poll.NewItems, wantItems)
+	}
+	if len(poll.Items) != wantItems {
+		t.Fatalf("poll: len(items)=%d, want %d", len(poll.Items), wantItems)
+	}
+
+	var items cli.ItemsResult
+	h.runJSON(&items, 0, "items", "--limit", "0")
+	if len(items.Items) != wantItems {
+		t.Fatalf("items: len(items)=%d, want %d", len(items.Items), wantItems)
+	}
 }
