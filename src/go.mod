@@ -6,7 +6,7 @@ require (
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/urfave/cli/v3 v3.10.1
 	golang.org/x/net v0.56.0
-	golang.org/x/sync v0.21.0
+	golang.org/x/sync v0.22.0
 	golang.org/x/text v0.38.0
 	modernc.org/sqlite v1.53.0
 )
