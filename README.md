@@ -85,8 +85,12 @@ feedwatch is built to be driven by a program:
 - stderr carries structured JSON log lines and structured error objects,
   including per-feed failures with a category (`network`, `http`, `parse`,
   `timeout`) and message.
-- Exit codes let an agent branch without parsing output: `0` success, `1` usage
-  or configuration error, `2` all targeted feeds failed, `3` partial success.
+- Exit codes let an agent branch without parsing output, following the
+  family-wide taxonomy in [ADR 0001](docs/adr/0001-exit-code-taxonomy.md): `0`
+  success; `2` all targeted feeds failed and `3` partial success are poll result
+  sub-codes (the command completed); whole-invocation failures use the BSD
+  `sysexits.h` range: `64` usage, `65` too-new stored data, `69` store
+  unavailable, `70` internal, `78` configuration.
 - `feedwatch schema` emits a machine-readable description of every command (its
   arguments, flags, exit codes, and an output JSON Schema) so an agent can
   discover the full contract without guessing.

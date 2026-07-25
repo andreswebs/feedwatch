@@ -23,15 +23,23 @@ beta work lands.
   structured error objects.** Treat them as two separate channels and capture
   both. Piping stdout into `jq` is always safe because diagnostics never land
   there.
-- **Exit codes are the fast outcome signal.** Branch on them before parsing:
+- **Exit codes are the fast outcome signal.** Branch on them before parsing.
+  They follow the family taxonomy in
+  [ADR 0001](../../adr/0001-exit-code-taxonomy.md): whole-invocation failures use
+  the BSD `sysexits.h` range, and 2 / 3 are poll result sub-codes (the command
+  completed), never failures.
 
-  | Code      | Meaning                             |
-  | --------- | ----------------------------------- |
-  | 0         | full success                        |
-  | 1         | usage or configuration error        |
-  | 2         | all targeted feeds failed           |
-  | 3         | partial success (some feeds failed) |
-  | 130 / 143 | interrupted by `SIGINT` / `SIGTERM` |
+  | Code      | Meaning                                            |
+  | --------- | -------------------------------------------------- |
+  | 0         | full success                                       |
+  | 2         | all targeted feeds failed (result sub-code)        |
+  | 3         | partial success, some feeds failed (result sub-code) |
+  | 64        | usage error (`EX_USAGE`)                           |
+  | 65        | stored data too new (`EX_DATAERR`)                 |
+  | 69        | store unavailable (`EX_UNAVAILABLE`)               |
+  | 70        | internal error (`EX_SOFTWARE`)                     |
+  | 78        | configuration error (`EX_CONFIG`)                 |
+  | 130 / 143 | interrupted by `SIGINT` / `SIGTERM`               |
 
   Codes 2 and 3 come only from feed-targeting commands, in practice `poll`.
 
@@ -124,7 +132,7 @@ feedwatch items --since 7d --order "published desc" \
   alias; it is stable across URL churn.
 - `feed_url` is an always-on identity field returned in every item, but naming
   it inside `--fields` is currently a hard usage error. Do not list it.
-  An unknown field name fails the whole query with exit 1. `[changes in
+  An unknown field name fails the whole query with exit 64 (usage). `[changes in
 002-beta: Req 5 accepts feed_url as a no-op and adds a did-you-mean hint]`
 
 ### Inspect and manage feed health
@@ -268,11 +276,11 @@ owns the cadence, and feedwatch stays a simple externally-driven sensor.
 ## Condensed checklist for the skill author
 
 - Capture both streams; never `2>/dev/null` when failures matter.
-- Branch on exit codes (0/1/2/3) before parsing.
+- Branch on exit codes before parsing (0 ok; 2/3 poll result sub-codes; 64/65/69/70/78 failures, per ADR 0001).
 - Bulk subscribe with OPML `import`; then `poll` to learn what is actually
   reachable (import does not validate today).
 - First `poll --force` seeds; later `poll` is incremental.
-- Always `--fields` for triage; do not name `feed_url`; unknown field = exit 1.
+- Always `--fields` for triage; do not name `feed_url`; unknown field = exit 64.
 - Treat `published_at: null` as normal (optional attribute), and know it
   coalesces into recent windows today.
 - Verify suspicious timestamp clusters against the raw feed before calling them

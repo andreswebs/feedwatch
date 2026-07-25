@@ -50,3 +50,22 @@ later, the orchestrate pattern can be extracted as a library.
 Setting `FetchRequest{URL: f.URL}` (no ETag or LastModified) ensures the server
 always returns a 200 with a body to parse. A conditional GET that receives 304
 would prove the URL is reachable but not that the body is currently parseable.
+
+## fee-8ugz: migrate Go module from src/ to repo root
+
+**Moving go.mod to the VCS root changes VCS stamping on bare `go build`.**
+While the module lived at `src/go.mod` (a subdirectory of the git repo), a bare
+`go build` reported `debug.ReadBuildInfo().Main.Version` as `(devel)`, so
+`version.Current()` fell through to `"dev"`. Once `go.mod` sits at the
+repository root (which is also the VCS root), Go stamps `Main.Version` with a
+real pseudo-version derived from the git tag (for example
+`v0.0.3-0.2026...-<sha>+dirty`). That broke the e2e `version` golden, which
+asserts the deterministic dev fallback. Fix: build the e2e binary with
+`-buildvcs=false` so `Main.Version` stays `(devel)` and the fallback is
+exercised deterministically regardless of git state. The shipped binary is
+unaffected because `make` always sets `version.Override` via `-ldflags -X`.
+
+**golangci-lint caches results by absolute path.** After the `git mv`, lint
+reported stale gosec/unused findings against nonexistent `/workspace/src/...`
+paths. `golangci-lint cache clean` (plus `go clean -cache`) cleared them; the
+findings were purely cache artifacts, not real regressions.

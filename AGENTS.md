@@ -6,8 +6,8 @@ leaving all content intelligence to the calling agent.
 
 ## Essentials
 
-- Go source lives under `src/`. All commands run from the project root via
-  `make`.
+- Go source lives at the repository root (`go.mod`, `cmd/`, `internal/`). All
+  commands run from the project root via `make`.
 - After any code change, run `make build`. It is the full quality gate
   (`fmt-check`, `vet`, `lint`, `test`, then compile) and must pass before a task
   is complete. Details: [docs/build.md](docs/build.md).

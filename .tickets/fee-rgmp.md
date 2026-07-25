@@ -1,6 +1,6 @@
 ---
 id: fee-rgmp
-status: open
+status: closed
 deps: [fee-8ugz]
 links: [fee-8ugz]
 created: 2026-07-22T20:05:19Z
@@ -145,3 +145,13 @@ The schema command already declares exit codes as data:
 **2026-07-24T20:37:32Z**
 
 Depends on and linked to fee-8ugz (Migrate Go module from src/ to repo root). After that migration lands, the Go module lives at the REPO ROOT, not under src/. Every src/ path in this ticket must be re-checked and de-prefixed before use: production sites become internal/core/errors.go, internal/cli/root.go, internal/poll/run.go, internal/cli/exit.go, internal/cli/schema_registry.go; tests become internal/e2e/e2e_test.go, internal/e2e/signal_test.go, internal/core; and the straggler grep 'src -rn "wantExit|ExitCodeFor"' becomes a root-relative grep (e.g. grep -rn 'wantExit|ExitCodeFor' --include='*_test.go' .). The cited line numbers should still hold since no .go content changes in the migration, only the src/ path prefix is dropped. make build runs from the repo root either way.
+
+**2026-07-25T00:09:32Z**
+
+Migrated whole-invocation failure exit codes from the single exit-1 bucket to the ADR 0001 sysexits.h taxonomy. Core change is one switch in core.ExitCodeFor: ErrUsage/CatUsage->64, ErrSchemaTooNew->65, ErrStoreUnavailable/CatStore->69, ErrConfig/CatConfig->78, CatInternal + unclassified fallback->70. Result sub-codes 2/3 (poll/check) and signal codes 130/143 unchanged.
+
+Beyond ExitCodeFor: two funnels in root.go (commandNotFound, completionShellNotFound) hardcoded OsExiter(1) and did NOT flow through ExitCodeFor as the ticket assumed; both now call core.ExitCodeFor so an unsupported completion shell exits 64. The mid-persist poll store-write failure is an unclassified error -> 70 (not 69), consistent with the ADR fallback rule.
+
+Schema registry now declares the failure classes as data (failureExitCodes() shared table; poll/check label 2/3 as result sub-codes). Added conformance guard TestExitCodeTablesCoverExitCodeFor asserting every code ExitCodeFor produces is a declared key and none lands in the 1-63 result range. Updated ExitCodeFor unit test, all cli exit-code assertions, and Go doc comments across the cli/poll/config packages. No golden files embed exit tables, so none regenerated.
+
+Docs updated to the new scheme: README, docs/cli-design.md, docs/usage.md, requirements.md (EARS), manual-qa.md; historical learnings.md got an appended fee-rgmp section; usage-learnings.md field guide updated. Breaking-change release notes drafted in new CHANGELOG.md (Unreleased). make build green; binary verified end-to-end (bogus->64, --concurrency 0->78, unwritable --db->69, add not-a-url->64).

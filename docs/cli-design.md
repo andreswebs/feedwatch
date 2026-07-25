@@ -69,9 +69,10 @@ kept portable across SQLite and PostgreSQL, maintained behind the `Store`
 interface where the dialects differ.
 
 A migration that fails aborts the command and surfaces a JSON error on stderr
-(exit 1); a failure is never logged and skipped. If the stored schema version is
-newer than the running binary understands, feedwatch refuses to operate rather
-than risk corrupting data written by a future version.
+(a store failure, exit 69); a failure is never logged and skipped. If the stored
+schema version is newer than the running binary understands, feedwatch refuses
+to operate (a data error, exit 65) rather than risk corrupting data written by a
+future version.
 
 ```sh
 feedwatch migrate --status
@@ -117,15 +118,23 @@ information: every color-coded status is also marked by a symbol or word.
 ### Exit Codes
 
 Distinct exit codes let an agent branch on the outcome without parsing output.
+They follow the family-wide taxonomy in
+[ADR 0001](adr/0001-exit-code-taxonomy.md): failure classes use the BSD
+`sysexits.h` range, while codes 2 and 3 are result sub-codes (the command
+completed and the code summarizes the poll outcome), not failures.
 
-| Code | Meaning                                               |
-| ---- | ----------------------------------------------------- |
-| 0    | Full success                                          |
-| 1    | Usage or configuration error                          |
-| 2    | All targeted feeds failed                             |
-| 3    | Partial success (some feeds failed, others succeeded) |
-| 130  | Interrupted by SIGINT                                 |
-| 143  | Terminated by SIGTERM                                 |
+| Code | Meaning                                                          |
+| ---- | ---------------------------------------------------------------- |
+| 0    | Full success                                                     |
+| 2    | Result: all targeted feeds failed (command completed)           |
+| 3    | Result: some feeds failed and some succeeded (command completed) |
+| 64   | Usage error, the CLI surface was misused (EX_USAGE)             |
+| 65   | Data error, stored schema is newer than this binary (EX_DATAERR) |
+| 69   | Store unavailable, could not be opened or reached (EX_UNAVAILABLE) |
+| 70   | Internal error, a bug (EX_SOFTWARE)                             |
+| 78   | Configuration error (EX_CONFIG)                                 |
+| 130  | Interrupted by SIGINT                                            |
+| 143  | Terminated by SIGTERM                                            |
 
 Per-feed failures are reported as structured objects on stderr with the feed
 URL, an error category (network, http, parse, timeout), and a message. Hard
@@ -169,27 +178,27 @@ feedwatch schema poll
 
 ## Architecture
 
-feedwatch is organized into small, single-responsibility packages under `src/`,
+feedwatch is organized into small, single-responsibility packages at the repository root,
 with a deliberately acyclic dependency graph. Pure domain types sit at the
 bottom and are imported everywhere; behavior lives behind narrow interfaces that
 their consumers depend on.
 
 ```text
-src/cmd/feedwatch/             main: signal-aware context, command tree, exit
-src/internal/core/            domain types: Feed, Item, Enclosure, Category,
-                              FeedError, sentinel errors (no internal deps)
-src/internal/store/           Store interface over core types
-src/internal/store/sqlite/    SQLite implementation + embedded migrations
-src/internal/store/postgres/  PostgreSQL implementation (deferred)
-src/internal/fetch/           HTTP: conditional GET, SSRF guard, retry, charset;
-                              Fetcher interface
-src/internal/parse/           Parser interface + gofeed impl + normalization
-src/internal/poll/            orchestration: fetch, parse, dedup, persist
-src/internal/discover/        autodiscovery and common-path probing
-src/internal/opml/            OPML import and export
-src/internal/output/          result envelope types, JSON/text renderers, color
-src/internal/cli/             command tree, flag definitions, Before hook, schema
-src/internal/config/          resolved configuration
+cmd/feedwatch/             main: signal-aware context, command tree, exit
+internal/core/             domain types: Feed, Item, Enclosure, Category,
+                           FeedError, sentinel errors (no internal deps)
+internal/store/            Store interface over core types
+internal/store/sqlite/     SQLite implementation + embedded migrations
+internal/store/postgres/   PostgreSQL implementation (deferred)
+internal/fetch/            HTTP: conditional GET, SSRF guard, retry, charset;
+                           Fetcher interface
+internal/parse/            Parser interface + gofeed impl + normalization
+internal/poll/             orchestration: fetch, parse, dedup, persist
+internal/discover/         autodiscovery and common-path probing
+internal/opml/             OPML import and export
+internal/output/           result envelope types, JSON/text renderers, color
+internal/cli/              command tree, flag definitions, Before hook, schema
+internal/config/           resolved configuration
 ```
 
 `Store`, `Parser`, and `Fetcher` are narrow interfaces defined for their
@@ -233,15 +242,17 @@ whole-invocation failures are sentinels (`ErrUsage`, `ErrConfig`,
 The boundary's `run` function returns a result envelope and an error, from which
 the exit code is derived:
 
-- A non-nil error is a hard, whole-invocation failure (usage, configuration, or
-  an unreachable or too-new store) and maps to exit 1. No result is written to
-  stdout; a single structured error object is written to stderr. The one
-  exception is `poll`: a store write that fails partway through persisting
-  fetched feeds still maps to exit 1, but the envelope covering the feeds
-  already persisted before the failure is written to stdout first, since that
-  work is durable and would otherwise never be reported (`result.Polled > 0`
-  distinguishes this mid-persist case from an early hard failure, where stdout
-  stays empty).
+- A non-nil error is a hard, whole-invocation failure and maps to a `sysexits.h`
+  failure code per [ADR 0001](adr/0001-exit-code-taxonomy.md): usage 64,
+  too-new store data 65, an unreachable store 69, configuration 78, and an
+  internal or unclassified failure 70. No result is written to stdout; a single
+  structured error object is written to stderr. The one exception is `poll`: a
+  store write that fails partway through persisting fetched feeds still maps to a
+  failure code (the unclassified write error is an internal failure, 70), but the
+  envelope covering the feeds already persisted before the failure is written to
+  stdout first, since that work is durable and would otherwise never be reported
+  (`result.Polled > 0` distinguishes this mid-persist case from an early hard
+  failure, where stdout stays empty).
 - A nil error means the envelope is written to stdout, and the exit code is
   derived from the envelope's per-feed outcome summary: 0 when all targeted
   feeds succeeded, 2 when all failed, and 3 when some succeeded and some failed.
@@ -266,8 +277,8 @@ into `jq` is never polluted by diagnostics.
 
 Ordinary failures never panic. `main` installs a top-level `recover` that
 converts an unexpected panic into a structured error object with category
-`internal` on stderr and exits 1, so a crash never breaks the stdout JSON
-contract.
+`internal` on stderr and exits 70 (`EX_SOFTWARE`, the internal-error class of
+ADR 0001), so a crash never breaks the stdout JSON contract.
 
 ## CLI Framework
 
@@ -291,11 +302,14 @@ color from the global flags and passes a derived `context.Context` to actions.
 `cmd.Run` returns an error and never calls `os.Exit`, so `main` owns the exit
 code (see Error Handling and Logging). Each action writes the stdout envelope
 and then returns either nil (exit 0) or a value implementing `cli.ExitCoder` for
-exit 1, 2, or 3; `main` passes the result to `cli.HandleExitCoder`. A custom
-`ExitErrHandler` emits the structured JSON error object to stderr in place of
-the framework's default text. Usage errors and unknown commands are intercepted
-through `OnUsageError` and `CommandNotFound` to emit the same JSON error shape
-with exit 1.
+a poll result sub-code (2 or 3); `main` passes the result to
+`cli.HandleExitCoder`. A whole-invocation failure is returned as a `*FeedError`
+or sentinel instead, which the custom `ExitErrHandler` maps to a `sysexits.h`
+failure code through `core.ExitCodeFor` (64, 65, 69, 70, 78 per ADR 0001) while
+emitting the structured JSON error object to stderr in place of the framework's
+default text. Usage errors and unknown commands are intercepted through
+`OnUsageError` and `CommandNotFound` to emit the same JSON error shape and the
+same usage code (64).
 
 The `schema` command is generated by introspecting the live command tree (its
 subcommands, flags, types, and defaults), augmented by a per-command registry
@@ -650,7 +664,7 @@ cron, or a systemd timer.
 | stdout               | Pure result JSON by default, `--format text` opt-in           |
 | stderr               | Structured JSON logs and error objects                        |
 | Color                | Text format only; gated by `--no-color`, `NO_COLOR`, and TTY  |
-| Exit codes           | 0 success, 1 usage, 2 all failed, 3 partial                   |
+| Exit codes           | 0 success; 2/3 poll result sub-codes; 64/65/69/70/78 sysexits failures (ADR 0001) |
 | Error model          | Typed `*FeedError` + sentinels, `%w`-wrapped, classified once |
 | Logging              | `log/slog` to stderr (JSON; text under `--format text`)       |
 | Discoverability      | `schema` command plus conventional `--help`                   |
@@ -663,7 +677,7 @@ cron, or a systemd timer.
 | HTTP fetch           | Connect and overall timeouts, SSRF guard, proxy/CA/TLS knobs  |
 | Concurrency          | Bounded parallel (`errgroup`), per-host politeness            |
 | Interrupts           | SIGINT/SIGTERM cancel, persist partial, exit 130/143          |
-| Package layout       | Small acyclic packages under `src/`; interface + clock seams  |
+| Package layout       | Small acyclic packages at the repository root; interface + clock seams  |
 | Item state           | Single internal `seen` layer                                  |
 | Content              | Raw HTML plus plaintext and base URL, dates RFC3339 UTC; null `published_at` honest, `fetched_at` never null |
 | Parser               | gofeed behind a `Parser` interface                            |

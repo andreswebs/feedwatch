@@ -1917,3 +1917,39 @@ key for those. No conditional logic needed;`network`/`parse`/`timeout`failures n
   delegating everything else — reusable for any future test needing a
   mid-persist write failure without hand-rolling a mock of the whole
   interface.
+
+## fee-rgmp — Migrate exit codes to the fleet taxonomy (ADR 0001)
+
+- **Only `core.ExitCodeFor` changed to reclassify failures.** The sentinels
+  (`ErrUsage`, `ErrConfig`, `ErrStoreUnavailable`, `ErrSchemaTooNew`) and the
+  `FeedError` categories were already distinguishable with `errors.Is`/
+  `errors.As`, so the whole reclassification is one `switch`: usage 64, config
+  78, store 69, schema-too-new 65, internal and the unclassified fallback 70.
+  Feed-scoped categories (network, http, parse, timeout) still map to 0, and
+  `poll`/`check` result sub-codes 2/3 come from `Result.ExitCode`, untouched.
+- **Two funnels hardcoded `OsExiter(1)` and did not flow through
+  `ExitCodeFor`.** `commandNotFound` and `completionShellNotFound` in `root.go`
+  built usage-category errors but exited 1 directly. The ticket assumed they
+  followed automatically; they did not. Both now call
+  `core.ExitCodeFor(err)` so an unsupported completion shell exits 64 like every
+  other usage error. `TestUnknownCommand` already routed through the returned-
+  error boundary (urfave treats an unknown top-level command as a usage error,
+  not via `CommandNotFound`), which is why only the completion test caught this.
+- **The mid-persist poll write failure maps to 70, not 69.** A store write that
+  fails partway is a bare, unclassified error (not wrapped as `CatStore` or
+  `ErrStoreUnavailable`), so it hits the `ExitCodeFor` fallback (70, internal).
+  This is consistent with the ADR's "internal and the final fallback 70" rule;
+  the ticket did not ask to reclassify these errors, only to remap codes.
+- **Conformance is a data cross-check, not prose.** The
+  `TestExitCodeTablesCoverExitCodeFor` guard enumerates one error per failure
+  class, asserts none returns a
+  code in the 1-63 result range, and asserts every produced code is a declared
+  key in `defaultExitCodes`/`pollExitCodes`/`checkExitCodes`. It fails if
+  `ExitCodeFor` ever grows a class the registry does not describe, satisfying the
+  ADR's registry-as-data requirement.
+- **No golden files embed the exit-code tables**, so nothing needed regenerating
+  with `-update`; the schema tables are asserted structurally in `schema_test.go`
+  and `check_test.go`, not byte-for-byte.
+- **`add` classifies every validation failure (bad URL, unfetchable, blocked
+  redirect) as `CatUsage`/`ErrUsage`**, so all of them exit 64 — worth knowing
+  when documenting exit codes for SSRF-redirect and non-feed rejection cases.

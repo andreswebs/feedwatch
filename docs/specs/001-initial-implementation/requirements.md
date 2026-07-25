@@ -80,12 +80,25 @@ I can branch on the result without parsing output.
 
 **Acceptance Criteria**:
 
+- The exit-code taxonomy follows
+  [ADR 0001](../../adr/0001-exit-code-taxonomy.md): failure classes use the BSD
+  `sysexits.h` range, and codes 2 and 3 are poll result sub-codes (the command
+  completed), never failures.
 - WHEN a command completes with full success, the system shall exit with code 0.
-- IF an invocation has a usage or configuration error, THEN the system shall
-  exit with code 1.
-- WHEN every targeted feed fails, the system shall exit with code 2.
+- IF an invocation has a usage error (the CLI surface was misused), THEN the
+  system shall exit with code 64 (`EX_USAGE`).
+- IF an invocation has a configuration error, THEN the system shall exit with
+  code 78 (`EX_CONFIG`).
+- IF the store cannot be opened or reached, THEN the system shall exit with code
+  69 (`EX_UNAVAILABLE`).
+- IF the stored schema is newer than the running binary supports, THEN the
+  system shall exit with code 65 (`EX_DATAERR`).
+- IF an internal or unclassified whole-invocation failure occurs, THEN the
+  system shall exit with code 70 (`EX_SOFTWARE`).
+- WHEN every targeted feed fails, the system shall exit with code 2 (a result
+  sub-code).
 - WHEN some targeted feeds succeed and others fail, the system shall exit with
-  code 3.
+  code 3 (a result sub-code).
 - WHEN a per-feed failure occurs, the system shall report it on stderr as a
   structured object including the feed URL, an error category, and a message.
 - The system shall classify per-feed error categories as at least network, http,

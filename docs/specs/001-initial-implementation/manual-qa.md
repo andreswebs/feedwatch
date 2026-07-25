@@ -81,8 +81,8 @@ idempotence checks, and lightweight exploratory passes around parsing and SSRF.
   `FEEDWATCH_DB`, so cases are independent and a "fresh machine" is reproducible.
 - **Fixture server:** fetch, poll, conditional-GET, redirect, failure, and parse
   cases need a controllable HTTP endpoint. The repo ships one at
-  `src/cmd/qafixtures` with the feed fixtures embedded under
-  `src/cmd/qafixtures/feeds`. Start it on loopback:
+  `cmd/qafixtures` with the feed fixtures embedded under
+  `cmd/qafixtures/feeds`. Start it on loopback:
 
   ```sh
   make qa-server                         # listens on 127.0.0.1:8099
@@ -121,8 +121,8 @@ idempotence checks, and lightweight exploratory passes around parsing and SSRF.
 
 ### Fixture server routes
 
-The server (`src/cmd/qafixtures`) exposes these routes. `<name>` is a file under
-`src/cmd/qafixtures/feeds` (for example `rss20.xml`, `atom.xml`, `jsonfeed.json`,
+The server (`cmd/qafixtures`) exposes these routes. `<name>` is a file under
+`cmd/qafixtures/feeds` (for example `rss20.xml`, `atom.xml`, `jsonfeed.json`,
 `ttl.xml`, `malformed.xml`, `latin1.xml`, `utf16le-bom.xml`, `sitemap.xml`,
 `subs.opml`, `autodiscovery.html`).
 
@@ -245,7 +245,7 @@ and the exit code with `; echo $?`.
 
 - **Steps:** `feedwatch add not-a-url 1>out.json 2>err.json; echo $?`.
 - **Expected:** `out.json` empty; `err.json` contains a single JSON error object;
-  exit 1.
+  exit 64 (usage, per [ADR 0001](../../adr/0001-exit-code-taxonomy.md)).
 
 #### TC-OUT-004: `--format text` renders friendly output on both streams (P1)
 
@@ -292,12 +292,16 @@ and the exit code with `; echo $?`.
 - **Steps:** `feedwatch poll <healthy-feed>; echo $?`.
 - **Expected:** exit 0.
 
-#### TC-EXIT-002: Usage/config error exits 1 (P0)
+#### TC-EXIT-002: Usage and config errors use the sysexits classes (P0)
+
+Exit codes follow [ADR 0001](../../adr/0001-exit-code-taxonomy.md): whole-
+invocation failures use the BSD `sysexits.h` range, never exit 1.
 
 - **Steps:** `feedwatch --concurrency 0 poll; echo $?` and
   `feedwatch bogus-command; echo $?`.
-- **Expected:** exit 1 in both; one JSON error object on stderr with category
-  `config` and `usage` respectively.
+- **Expected:** exit 78 (config) for the first and exit 64 (usage) for the
+  second; one JSON error object on stderr with category `config` and `usage`
+  respectively.
 
 #### TC-EXIT-003: All targeted feeds fail exits 2 (P1)
 
@@ -417,25 +421,26 @@ and the exit code with `; echo $?`.
   knows (hand-stamp a future version, or use a DB from a newer build).
 - **Steps:** run any command against it.
 - **Expected:** the command aborts, reports a JSON error (schema-too-new), leaves
-  state unchanged, exits 1.
+  state unchanged, exits 65 (data error).
 
 #### TC-MIGRATE-004: Failed upgrade leaves state unchanged (P1)
 
 - **Steps:** simulate a migration failure (for example, a read-only DB file mid
   upgrade).
-- **Expected:** command aborts with a JSON error on stderr (exit 1); persisted
-  state is not partially modified.
+- **Expected:** command aborts with a JSON error on stderr (a store failure,
+  exit 69); persisted state is not partially modified.
 
 #### TC-STORE-001: Remote DSN selects the (deferred) backend (P1)
 
 - **Steps:** `feedwatch --db postgres://user@host/feedwatch migrate; echo $?`.
 - **Expected:** JSON error with category `config` ("postgres backend not yet
-  implemented"); exit 1. Confirms scheme-based backend selection.
+  implemented"); exit 78 (config). Confirms scheme-based backend selection.
 
 #### TC-STORE-002: Unwritable store reports store error (P1)
 
 - **Steps:** `feedwatch --db /nonexistent-dir/sub/fw.db migrate; echo $?`.
-- **Expected:** JSON error category `store` on stderr; exit 1; stdout empty.
+- **Expected:** JSON error category `store` on stderr; exit 69 (store
+  unavailable); stdout empty.
 
 #### TC-STORE-003: Crash-safe under concurrent multi-feed poll (P2)
 
@@ -458,7 +463,7 @@ and the exit code with `; echo $?`.
 
 - **Steps:** `feedwatch add <html-page-url>; echo $?`.
 - **Expected:** rejected with a JSON error directing the caller to `discover`;
-  exit 1; nothing subscribed (`list` unchanged).
+  exit 64 (usage); nothing subscribed (`list` unchanged).
 
 #### TC-SUB-003: `add` with alias and per-feed interval (P1)
 
@@ -623,8 +628,9 @@ and the exit code with `; echo $?`.
 - **Steps:**
   1. `feedwatch add "${REDIR}" 2>err.json; echo $?` -> rejected.
   2. `feedwatch --allow-private add "${REDIR}"; echo $?` -> permitted.
-- **Expected:** by default the redirect into private space is blocked (a `network`
-  error on stderr citing the blocked redirect; exit 1; `list` unchanged); with
+- **Expected:** by default the redirect into private space is blocked (a
+  `usage`-category error on stderr citing the blocked redirect, since `add`
+  classifies a failed validation fetch as usage; exit 64; `list` unchanged); with
   `--allow-private` the redirect is followed to the loopback feed and the
   subscription is created (exit 0). The resolved address is re-checked on every
   hop. The block is also unit-tested by `TestCheckRedirectBlocksPublicToPrivate`.
@@ -747,7 +753,7 @@ and the exit code with `; echo $?`.
   always-on `feed_url` identity field (e.g. `--fields summary` yields
   `{feed_url, summary}`), and requested fields are always present even when
   empty; an unknown field name (including a partially-valid list like
-  `title,bogus`) is rejected with a `usage`-category error, exit 1, empty
+  `title,bogus`) is rejected with a `usage`-category error, exit 64, empty
   stdout; the full normalized item is returned when `--fields` is omitted (with
   `published_at` present or `null`).
 
@@ -922,8 +928,8 @@ and the exit code with `; echo $?`.
   1. `feedwatch add ${FEED_URL} --alias myfeed`.
   2. `feedwatch check myfeed` -- checked by alias.
   3. `feedwatch check https://no-such.example/feed.xml` -- unknown ref.
-- **Expected:** step 2 exits 0 and reports `checked=1`; step 3 exits 1 with a
-  usage-category JSON error on stderr and nothing on stdout.
+- **Expected:** step 2 exits 0 and reports `checked=1`; step 3 exits 64 (usage)
+  with a usage-category JSON error on stderr and nothing on stdout.
 
 #### TC-CHECK-003: All feeds pass -- exit 0, failures is empty list (P1)
 

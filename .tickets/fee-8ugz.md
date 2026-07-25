@@ -1,6 +1,6 @@
 ---
 id: fee-8ugz
-status: open
+status: closed
 deps: []
 links: [fee-rgmp]
 created: 2026-07-24T20:37:12Z
@@ -509,3 +509,7 @@ FLEET DECISIONS finalized (see .local/planning/go-module-root-migration.md
   ./docs/**, ./.git/**.
 - `.github/dependabot.yml`: gomod `directory: /src` -> `/` (this plan already
   flagged it, including the `directory:` line).
+
+**2026-07-24T23:49:34Z**
+
+Migrated the Go module from src/ to the repo root. git mv of go.mod, go.sum, .golangci.yml, cmd/, internal/ (history preserved); removed empty src/. Fixups: Makefile SRC_DIR := $(CURDIR); ci.yml + release.yml go-version-file/cache-dependency-path -> go.mod/go.sum; release.yml SBOM path: . with new root .syft.yaml excluding bin/dist/docs/.github/.git; dependabot gomod directory /src -> /; docs (AGENTS.md, build.md, cli-design.md layout tree + table, manual-qa.md qafixtures paths). NOT edited: learnings.md history and urfave-cli reference prose (external module paths). Two non-obvious gotchas fixed: (1) with go.mod now at the VCS root, bare 'go build' stamps a real pseudo-version instead of (devel), breaking the e2e version golden -- fixed by building the e2e binary with -buildvcs=false so it exercises the 'dev' fallback deterministically; the shipped binary is unaffected (make always sets version.Override via -ldflags -X). (2) golangci-lint cached findings by old /workspace/src/ paths; 'golangci-lint cache clean' + 'go clean -cache' cleared the false positives. Verified: make build green, --version/schema work, make qa-server QA_ARGS=--help builds/runs. Step 8 (fleet go.work './feedwatch/src' -> './feedwatch') is outside this repo and left for the workspace owner, as is committing/tagging.

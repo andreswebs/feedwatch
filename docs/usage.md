@@ -74,26 +74,36 @@ and never as the sole carrier of meaning. It is disabled by `--no-color`, by the
 ## Exit codes
 
 Distinct exit codes let an agent branch on the outcome without parsing output.
+They follow the family-wide taxonomy in
+[ADR 0001](adr/0001-exit-code-taxonomy.md): whole-invocation failures use the
+BSD `sysexits.h` range, while codes 2 and 3 are result sub-codes (the command
+completed and the code summarizes the poll outcome), not failures.
 
-| Code | Meaning                                                |
-| ---- | ------------------------------------------------------ |
-| 0    | Full success.                                          |
-| 1    | Usage or configuration error.                          |
-| 2    | All targeted feeds failed.                             |
-| 3    | Partial success (some feeds failed, others succeeded). |
-| 130  | Interrupted by `SIGINT`.                               |
-| 143  | Terminated by `SIGTERM`.                               |
+| Code | Meaning                                                          |
+| ---- | ---------------------------------------------------------------- |
+| 0    | Full success.                                                    |
+| 2    | Result: all targeted feeds failed (command completed).           |
+| 3    | Result: some feeds failed and some succeeded (command completed). |
+| 64   | Usage error: the CLI surface was misused (`EX_USAGE`).           |
+| 65   | Data error: the stored schema is newer than this binary supports (`EX_DATAERR`). |
+| 69   | Store unavailable: the store could not be opened or reached (`EX_UNAVAILABLE`). |
+| 70   | Internal error, a bug (`EX_SOFTWARE`).                           |
+| 78   | Configuration error: invalid configuration (`EX_CONFIG`).       |
+| 130  | Interrupted by `SIGINT`.                                         |
+| 143  | Terminated by `SIGTERM`.                                         |
 
-Codes 2 and 3 are produced only by commands that target feeds (notably `poll`).
-Commands without a per-feed outcome use 0 for success and 1 for a usage or
-configuration error.
+Codes 2 and 3 are produced only by commands that target feeds (notably `poll`
+and `check`). Commands without a per-feed outcome use 0 for success and a
+`sysexits.h` failure code otherwise. No whole-invocation failure exits 1; exit 1
+and the 2-63 range are reserved for result classes.
 
-Exit 1 from `poll` can carry a partial envelope on stdout: when a store write
+A failing `poll` can carry a partial envelope on stdout: when a store write
 fails partway through persisting fetched feeds, the feeds already persisted
 before the failure are still reported (`new_items`/`items` cover exactly that
-subset), and the process still exits 1. An early hard failure (unreachable
-store, unknown named feed) leaves stdout empty, as before. A consumer of
-`poll` should process stdout even on exit 1, since it is not necessarily
+subset), and the process still exits with a failure code (70, an internal
+error, for the unclassified write failure). An early hard failure (unreachable
+store, unknown named feed) leaves stdout empty, as before. A consumer of `poll`
+should process stdout even on a failure exit, since it is not necessarily
 empty.
 
 ## Global flags
@@ -201,11 +211,12 @@ Options:
 - `--force`, `--all` - poll every active feed, ignoring the schedule.
 
 A hard failure while persisting a fetched feed (a store write error) aborts the
-run and exits 1, but the envelope for feeds already persisted before the
-failure is still written to stdout, since that work is durable; a retry
-reports the remaining feeds as new. An early hard failure (before any feed is
-fetched, such as an unreachable store or an unknown named feed) leaves stdout
-empty.
+run and exits with a failure code (70, an internal error, for the unclassified
+write failure), but the envelope for feeds already persisted before the failure
+is still written to stdout, since that work is durable; a retry reports the
+remaining feeds as new. An early hard failure (before any feed is fetched, such
+as an unreachable store, exit 69, or an unknown named feed, a usage error, exit
+64) leaves stdout empty.
 
 ```sh
 feedwatch poll          # only due feeds
@@ -235,9 +246,10 @@ status?}` entry per failed feed -- the same shape as the poll failures list.
 Exit codes mirror `poll`:
 
 - 0: all checked feeds passed (or nothing to check)
-- 1: usage or configuration error (unknown ref, unreachable store)
-- 2: all checked feeds failed
-- 3: partial -- some feeds passed and some failed
+- 2: all checked feeds failed (a result sub-code, the command completed)
+- 3: partial -- some feeds passed and some failed (a result sub-code)
+- 64/65/69/70/78: whole-invocation failures (usage, too-new data, store
+  unavailable, internal, config) per the exit-code taxonomy above
 
 ```sh
 feedwatch check
@@ -280,7 +292,7 @@ Options:
   `categories`, `enclosures`, `published_at`, `updated_at`, `fetched_at`. The
   result carries exactly the requested fields plus the always-on `feed_url`
   identity field. Naming `feed_url` itself is accepted as a no-op, since it is
-  emitted regardless. An unknown field name is a usage error (exit 1) that
+  emitted regardless. An unknown field name is a usage error (exit 64) that
   returns no partial results; the error message lists all valid field names, and
   when the unknown name closely resembles a valid field, the error also includes
   a did-you-mean suggestion. `published_at` and `updated_at` are nullable

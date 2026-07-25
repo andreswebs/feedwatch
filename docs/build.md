@@ -1,6 +1,7 @@
 # Build and Validation
 
-All commands run from the project root via `make`. Go source lives under `src/`.
+All commands run from the project root via `make`. Go source lives at the
+repository root.
 
 | Command          | Purpose                                                                         |
 | ---------------- | ------------------------------------------------------------------------------- |
