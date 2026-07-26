@@ -14,6 +14,12 @@ linters:
     - staticcheck
     - unused
 
+  exclusions:
+    rules:
+      - path: (^|/)cmd/qafixtures/
+        linters:
+          - gosec
+
 formatters:
   enable:
     - gofmt
