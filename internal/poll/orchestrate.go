@@ -31,7 +31,19 @@ type Deps struct {
 	DefaultInterval  time.Duration
 	FailureThreshold int
 	MaxBackoff       time.Duration
+
+	// Warn, when non-nil, receives non-fatal advisories the caller cannot
+	// otherwise observe from a single invocation's output. The poll layer never
+	// writes to a stream itself; the cli layer wires this to the renderer. A nil
+	// callback is a no-op.
+	Warn WarnFunc
 }
+
+// WarnFunc receives a non-fatal advisory: a stable machine code, a human
+// message, an optional remediation hint, and optional structured details. It is
+// the seam that keeps internal/poll stream-blind, mirroring output.EmitWarning's
+// shape without importing it.
+type WarnFunc func(code, message, hint string, details any)
 
 // feedOutcome is the per-feed result of the fetch-orchestration stage: the feed,
 // its fetch result, and its parsed body. err is nil on success or a 304; on a

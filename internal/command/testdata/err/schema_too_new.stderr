@@ -1,0 +1,1 @@
+{"schema_version":1,"ok":false,"error":{"code":"schema_too_new","message":"stored schema version 2 newer than supported 1: schema version newer than supported","hint":"upgrade feedwatch to a version that understands this store's schema"}}

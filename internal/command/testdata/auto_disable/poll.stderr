@@ -1,0 +1,1 @@
+{"schema_version":1,"level":"warning","code":"feed_auto_disabled","message":"feed disabled after 10 consecutive failures","hint":"re-enable with: feedwatch enable \u003cfeed\u003e","details":{"failures":10,"feed_url":"http://feedserver/feed.xml"}}

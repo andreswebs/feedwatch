@@ -1,6 +1,6 @@
 ---
 id: fee-q120
-status: open
+status: closed
 deps: [fee-z3bm]
 links: []
 created: 2026-07-26T11:23:25Z
@@ -288,3 +288,7 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T16:43:16Z**
+
+Consolidated the exit boundary into command.Run(args, deps) int and renamed internal/cli -> internal/command. main is now signal.Notify wiring plus one os.Exit(command.Run(os.Args[1:], deps)); no cliv3.OsExiter/HandleExitCoder/VersionPrinter mutation anywhere. run.go holds the framework-free contract (Run, Deps, finish, watchSignal, boundaryError); root.go holds the urfave interior (newRoot, neutralize, runRoot/runCustom). neutralize clears ExitErrHandler and sets the sanctioned usage classifier (onUsageError) on the root and recursively. Deps shrank to {In io.Reader, Out, Err io.Writer, Clock, Version, Signal} plus unexported store/fetch/parse test seams; Cfg/Log dropped (config.Defaults() used internally). exitError is a plain type (no ExitCoder). --version is now a plain --version/-v flag (HideVersion) handled in Before via a zero-code exitError, so no VersionPrinter global. output.NewRenderer/ResolveColor take io.Writer and probe Fd()/Stat() (buffers -> no color). CommandSchema renamed to Schema to avoid the command.Command*stutter. Every per-command test helper funnels through one drive() that runs the real Run; runResult.exited removed (== code!=0). New tests: TestRunSignalOverridesExitCode (130/143 override), TestExitErrorIsNotFrameworkExitCoder, TestContractFilesDoNotImportFramework, TestUnknownFlagUsageWording, output no-color-for-non-file-writer. All e2e goldens byte-identical (no -update); signal_test.go unchanged. make build green (fmt/vet/lint 0 issues/test/compile). Note: run.go must NOT take a*cli.Command param (would leak the framework into the contract) - the signal-override test composes watchSignal+runCustom+finish directly instead.

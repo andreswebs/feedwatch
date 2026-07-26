@@ -1,0 +1,1 @@
+{"schema_version":1,"ok":false,"error":{"code":"store_unavailable","message":"open sqlite \"<db>\": unable to open database file (14)\nstore unavailable","hint":"check the store path or connection string and its permissions"}}

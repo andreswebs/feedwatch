@@ -76,7 +76,7 @@ future version.
 
 ```sh
 feedwatch migrate --status
-# {"schema_version":4,"pending":0,"backend":"sqlite"}
+# {"schema_version":1,"ok":true,"store_schema_version":4,"pending":0,"backend":"sqlite"}
 ```
 
 ## Configuration
@@ -98,15 +98,21 @@ variables), a custom CA bundle (`--ca-bundle`), a minimum TLS version
 
 The output contract is the core of the agent-first interface.
 
-- stdout carries pure result JSON by default, using a consistent top-level
-  envelope so an agent can parse every command uniformly. `--format text`
-  switches to terminal-friendly tables and color for the occasional human;
-  `--format json` is the default and may be stated explicitly. The enum leaves
-  room for additional formats later without adding new flags.
-- stderr carries structured JSON log lines and structured JSON error objects.
-  This keeps stdout clean: piping stdout into `jq` never chokes on an error or a
-  diagnostic. `--log-level` (error, warn, info, debug) and `--quiet` control
-  verbosity; `--format text` makes stderr friendly text too.
+- stdout carries exactly one result JSON envelope per invocation, using a
+  consistent top-level head (`schema_version` and `ok`) so an agent can parse
+  every command uniformly, and nothing else: no log, warning, or banner.
+  Collections in the payload never serialize as `null`; an absent list is `[]`.
+  `--format text` switches to terminal-friendly tables and color for the
+  occasional human; `--format json` is the default and may be stated explicitly.
+  The enum leaves room for additional formats later without adding new flags.
+- stderr carries three distinguishable kinds of JSON object: the error envelope
+  (`ok:false` plus an `error` object), NDJSON warning lines (`level:"warning"`),
+  and slog diagnostic records. A consumer tells them apart by key presence: an
+  `ok` key means the error envelope, a `level` key means a warning, neither means
+  a log. This keeps stdout clean: piping stdout into `jq` never chokes on an
+  error or a diagnostic. `--log-level` (error, warn, info, debug) and `--quiet`
+  control log verbosity (warnings are contract output and are never suppressed);
+  `--format text` makes stderr friendly text too.
 
 Color appears only in `--format text`; JSON output is never colorized on either
 stream. In text mode, color is enabled for a stream only when that stream is a
@@ -118,7 +124,7 @@ information: every color-coded status is also marked by a symbol or word.
 ### Exit Codes
 
 Distinct exit codes let an agent branch on the outcome without parsing output.
-They follow the family-wide taxonomy in
+They follow the taxonomy in
 [ADR 0001](adr/0001-exit-code-taxonomy.md): failure classes use the BSD
 `sysexits.h` range, while codes 2 and 3 are result sub-codes (the command
 completed and the code summarizes the poll outcome), not failures.
@@ -136,26 +142,26 @@ completed and the code summarizes the poll outcome), not failures.
 | 130  | Interrupted by SIGINT                                            |
 | 143  | Terminated by SIGTERM                                            |
 
-Per-feed failures are reported as structured objects on stderr with the feed
-URL, an error category (network, http, parse, timeout), and a message. Hard
-failures (bad arguments, unreachable store) also emit a JSON error object on
-stderr.
+Per-feed failures are result data, reported in the stdout envelope's `failures`
+array with the feed URL, an error category (network, http, parse, timeout), a
+message, and an HTTP status where applicable; they are not written to stderr. A
+hard, whole-invocation failure (bad arguments, unreachable store) emits a single
+error envelope on stderr instead.
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
-# stdout: {"polled":3,"succeeded":2,"failed":1,"new_items":2,"items":[...],
-#          "failures":[{"feed_url":"...","category":"http","status":404}],
+# stdout: {"schema_version":1,"ok":true,"polled":3,"succeeded":2,"failed":1,"new_items":2,"items":[...],
+#          "failures":[{"feed_url":"...","category":"http","status":404,"message":"server returned HTTP 404"}],
 #          "renamed":[]}
-# err.json: {"errors":[{"feed_url":"...","category":"http","status":404,
-#                       "message":"404 Not Found"}]}
+# err.json: empty (a partial poll is not a whole-invocation failure; the
+#           per-feed detail is on stdout in the failures array)
 # exit=3
 ```
 
-The stdout envelope enumerates which feeds failed (URL, category, and HTTP
-status where applicable) so an agent can triage a partial failure from the
-result stream alone; stderr still carries the full per-feed detail, including
-the human-readable message. The two streams are redundant by design, not
-substitutes.
+The stdout envelope enumerates which feeds failed (URL, category, message, and
+HTTP status where applicable) so an agent can triage a partial failure from the
+result stream alone. stderr carries no per-feed batch object: it is reserved for
+the whole-invocation error envelope, warnings, and logs.
 
 ### Discoverability
 
@@ -170,7 +176,7 @@ An agent discovers the full contract without guessing:
 
 ```sh
 feedwatch schema poll
-# {"command":"poll","args":[{"name":"feed","variadic":true}],
+# {"schema_version":1,"ok":true,"command":"poll","args":[{"name":"feed","variadic":true}],
 #  "flags":[{"name":"--force","type":"bool"}, ...],
 #  "exit_codes":{"0":"ok","2":"all failed","3":"partial"},
 #  "output_schema":{ ... JSON Schema ... }}
@@ -184,7 +190,7 @@ bottom and are imported everywhere; behavior lives behind narrow interfaces that
 their consumers depend on.
 
 ```text
-cmd/feedwatch/             main: signal-aware context, command tree, exit
+cmd/feedwatch/             main: signal.Notify wiring, one os.Exit(command.Run)
 internal/core/             domain types: Feed, Item, Enclosure, Category,
                            FeedError, sentinel errors (no internal deps)
 internal/store/            Store interface over core types
@@ -197,7 +203,8 @@ internal/poll/             orchestration: fetch, parse, dedup, persist
 internal/discover/         autodiscovery and common-path probing
 internal/opml/             OPML import and export
 internal/output/           result envelope types, JSON/text renderers, color
-internal/cli/              command tree, flag definitions, Before hook, schema
+internal/command/          Run boundary (contract) + urfave interior: command
+                           tree, flags, Before hook, schema
 internal/config/           resolved configuration
 ```
 
@@ -258,16 +265,17 @@ the exit code is derived:
   feeds succeeded, 2 when all failed, and 3 when some succeeded and some failed.
 
 Per-feed failures during a poll are recorded into the result and persisted as
-feed failure state (count, last error, time), and the same failures are emitted
-to stderr as structured `*FeedError` objects. The stdout envelope also reports
-the outcome on the result stream: a `succeeded` count, a `failed` count, and a
-`failures` list whose entries carry the feed URL, the error category, and, where
-applicable, the HTTP status (the `status` field is omitted for network, parse,
-and timeout failures that have no status). The attempted-feed count `polled`
-satisfies the invariant `polled == succeeded + failed`, and `failures` is always
-present as a list, empty when no feed failed. The exit code still reports
-whether anything failed; the envelope reports which feeds and their category;
-stderr adds the human-readable message and full diagnostic detail.
+feed failure state (count, last error, time). They are result data reported only
+on the stdout envelope, which carries a `succeeded` count, a `failed` count, and
+a `failures` list whose entries carry the feed URL, the error category, a
+message, and, where applicable, the HTTP status (the `status` field is omitted
+for network, parse, and timeout failures that have no status). The attempted-feed
+count `polled` satisfies the invariant `polled == succeeded + failed`, and
+`failures` is always present as a list, empty when no feed failed. The exit code
+reports whether anything failed; the envelope reports which feeds failed, their
+category, and the human-readable message. Per-feed failures are never written to
+stderr; stderr carries only the whole-invocation error envelope, warnings, and
+logs.
 
 Logging uses the standard library `log/slog`. The default handler writes JSON
 log lines to stderr; under `--format text` a text handler writes friendly lines
@@ -276,9 +284,9 @@ floor to errors only. Logs are never written to stdout, so a result stream piped
 into `jq` is never polluted by diagnostics.
 
 Ordinary failures never panic. `main` installs a top-level `recover` that
-converts an unexpected panic into a structured error object with category
-`internal` on stderr and exits 70 (`EX_SOFTWARE`, the internal-error class of
-ADR 0001), so a crash never breaks the stdout JSON contract.
+converts an unexpected panic into an error envelope with `error.code`
+`internal_error` on stderr and exits 70 (`EX_SOFTWARE`, the internal-error class
+of ADR 0001), so a crash never breaks the stdout JSON contract.
 
 ## CLI Framework
 
@@ -373,7 +381,7 @@ chosen URL to `add`.
 
 ```sh
 feedwatch discover https://example.com
-# {"candidates":[{"title":"Blog","url":".../feed.xml",
+# {"schema_version":1,"ok":true,"candidates":[{"title":"Blog","url":".../feed.xml",
 #   "type":"application/atom+xml","source":"autodiscovery"}]}
 feedwatch add https://example.com/feed.xml
 ```
@@ -405,10 +413,10 @@ feedwatch add https://example.com/feed.xml
 
 ```sh
 feedwatch poll          # only due feeds, marks new items seen
-# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"new_items":7,
+# {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":1,"new_items":7,
 #  "items":[...],"failures":[],"renamed":[]}
 feedwatch poll          # immediately again
-# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"new_items":0,
+# {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":3,"new_items":0,
 #  "items":[],"failures":[],"renamed":[]}
 ```
 
@@ -585,12 +593,13 @@ it occurred. Failing feeds are subject to exponential backoff and are not
 retried until the backoff elapses, even when their interval is otherwise due.
 After a configurable number of consecutive failures (default around 10), a feed
 is marked disabled and skipped by poll; it is surfaced in `list` and resumed
-with `enable`. All failures are reported on stderr with their category and
-count.
+with `enable`. Each poll reports its per-feed failures with their category and
+message in the stdout `failures` array, and the poll that crosses the disable
+threshold also emits a `feed_auto_disabled` NDJSON warning on stderr.
 
 ```sh
 feedwatch list
-# {"feeds":[{"url":"...","status":"active","failures":0},
+# {"schema_version":1,"ok":true,"feeds":[{"url":"...","status":"active","failures":0},
 #           {"url":"...","status":"disabled","failures":12,
 #            "last_error":"dns: no such host"}]}
 feedwatch enable https://flaky.example/feed.xml
@@ -637,7 +646,7 @@ of other readers.
 
 ```sh
 feedwatch import subs.opml
-# {"added":42,"skipped":3,"failed":[{"xmlUrl":"...","reason":"404 Not Found"}]}
+# {"schema_version":1,"ok":true,"added":42,"skipped":3,"failed":[{"xmlUrl":"...","reason":"404 Not Found"}]}
 feedwatch import --no-validate subs.opml   # fast bulk-add, no reachability check
 feedwatch export -o backup.opml
 feedwatch export | curl ...
@@ -661,8 +670,8 @@ cron, or a systemd timer.
 | Storage              | SQLite default behind a `Store` interface; optional Postgres  |
 | Schema lifecycle     | Embedded migrations, auto-applied, refuse newer version       |
 | Configuration        | Flags and environment, XDG defaults, no config file           |
-| stdout               | Pure result JSON by default, `--format text` opt-in           |
-| stderr               | Structured JSON logs and error objects                        |
+| stdout               | One headed result JSON envelope per invocation, `--format text` opt-in |
+| stderr               | Error envelope, NDJSON warnings, and structured JSON logs      |
 | Color                | Text format only; gated by `--no-color`, `NO_COLOR`, and TTY  |
 | Exit codes           | 0 success; 2/3 poll result sub-codes; 64/65/69/70/78 sysexits failures (ADR 0001) |
 | Error model          | Typed `*FeedError` + sentinels, `%w`-wrapped, classified once |

@@ -1,11 +1,24 @@
 package output_test
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
 	"github.com/andreswebs/feedwatch/internal/output"
 )
+
+// TestNewRendererNoColorForNonFileWriter covers the Fd() probe: a writer that is
+// not a terminal file (a plain bytes.Buffer has no Fd/Stat) resolves to no color
+// on either stream, even under text format, which is the correct answer for a
+// non-terminal.
+func TestNewRendererNoColorForNonFileWriter(t *testing.T) {
+	var out, errb bytes.Buffer
+	r := output.NewRenderer("text", &out, &errb, output.ColorPolicy{})
+	if r.OutColor || r.ErrColor {
+		t.Errorf("buffer writers resolved to color: out=%v err=%v, want false", r.OutColor, r.ErrColor)
+	}
+}
 
 // nonTerminal returns an *os.File backed by a regular file, which is never a
 // character device and so never reports as a terminal.

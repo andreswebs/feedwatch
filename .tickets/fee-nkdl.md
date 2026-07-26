@@ -1,6 +1,6 @@
 ---
 id: fee-nkdl
-status: open
+status: closed
 deps: [fee-7hf3]
 links: []
 created: 2026-07-26T11:21:36Z
@@ -214,3 +214,7 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T16:53:10Z**
+
+Added the ADR 0005 NDJSON warning channel. output.EmitWarning writes one newline-terminated {schema_version,level:"warning",code,message,hint?,details?} object per line (best-effort, drops on marshal failure); Renderer.Warn gates on format like Result/Error, text mode uses new SymbolWarn (warn glyph) + ansiYellow, never SymbolFail. Poll stays stream-blind: poll.Deps gained a WarnFunc field and RecordFailure a trailing warn param that fires exactly on the crossing (count==threshold, not >=), wired in command/poll.go to the renderer's Warn method value; nil callback is a no-op. Final advisory: code=feed_auto_disabled, message='feed disabled after N consecutive failures', hint='re-enable with: feedwatch enable <feed>', details={feed_url,failures}. --quiet does not suppress warnings (pinned by the e2e auto_disable golden, which runs under --quiet and shows only the warning line on stderr). Only the auto-disable producer is wired; redirect rename, charset fallback, and guessed discover candidate are intentionally not. Docs: usage.md, manual-qa.md (TC-FAIL-009), CHANGELOG, learnings updated. make build passes.

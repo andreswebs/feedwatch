@@ -260,6 +260,7 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 Adopted the ADR 0005 result envelope head across all stdout envelopes.
 
 Done:
+
 - output.SchemaVersion, output.Head, output.OKHead() added; every JSON result now opens with {"schema_version":1,"ok":true,...}.
 - Head embedded in all 17 result envelopes (incl. promoted VersionResult); null-coalescing MarshalJSON added to every collection-owning envelope (Poll, Check, List, Items, ProjectedItems, Discover, Import, Schema, CommandSchema). Removed the call-site make()/nil-guards that existed only to avoid null (check, poll x2, items).
 - jsonschema.structSchema now inlines anonymous embedded structs, so output_schema shows schema_version+ok at top level (required) with no Head property; migrate output_schema (OneOf) inherits it.

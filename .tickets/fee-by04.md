@@ -1,6 +1,6 @@
 ---
 id: fee-by04
-status: open
+status: closed
 deps: [fee-7hf3, fee-z3bm, fee-nkdl, fee-e4tl]
 links: []
 created: 2026-07-26T11:24:54Z
@@ -167,3 +167,21 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T17:27:31Z**
+
+Final ADR-adoption documentation pass (docs only, no code).
+
+usage.md: rewrote the stream-contract section to state stdout carries exactly one headed result envelope per invocation and stderr carries three distinguishable objects with the key-presence discrimination rule (ok=error envelope, level=warning, neither=log). Fixed 'family-wide taxonomy' to 'taxonomy'. Rest of the doc already carried the adopted per-command shapes (sibling tickets); verified consistent.
+
+requirements.md: corrected REQ 2 (Output Contract) to describe the envelope head, no-null-collections, the error envelope shape, the NDJSON warning channel, the three-way key-presence rule, and that --quiet does not suppress warnings; corrected REQ 3 (Outcome Signaling) so per-feed failures live in the stdout failures array, not a removed stderr batch object. Added Appendix B revision note listing the affected requirement sections.
+
+CHANGELOG.md: verified the three breaking entries (error-object reshape + batch removal, migrate schema_version->store_schema_version with check ok->passed, sysexits exit codes) and the additive entries (head, warnings, schema inventory) read as one coherent set; added a consolidated ### Migration note (branch on error.code not error.category; per-feed failures from stdout; store_schema_version; check .passed; exit 64-78 not 1).
+
+learnings.md: added the fee-by04 section recording the six owner-decided adoption decisions with rationale (terr layered onto FeedError; stderr batch dropped; store_schema_version; schema core+enrichment; one wired warning producer; warnings not suppressed by --quiet), cross-referencing sibling ticket headings for the implementation detail.
+
+Scope beyond the four named files: the invariant 'No document shows a headless envelope, the {category,feed_url,status,message} error object, the stderr batch form, or the migrate schema_version field' also caught cli-design.md and manual-qa.md, which still misdescribed the contract. Fixed every removed WIRE shape in both: added envelope heads to all example JSON, replaced the batch err.json example and the 'streams are redundant' prose, moved per-feed failures to the stdout failures array in prose, renamed the migrate field, and replaced category-as-error-code prose with error.code (usage_error/config_error/store_unavailable/internal_error) in TC-EXIT-002/003/004/005, TC-STORE-002, the SSRF and check-by-alias cases.
+
+Deliberately out of scope: cli-design.md's CLI-Framework/Error-Handling architecture prose still references pre-rework internals (core.ExitCodeFor -> now output.ExitCodeFor, cmd.Run/ExitErrHandler -> now Run(args,deps) int/neutralize from fee-q120). These are internal-architecture staleness, not enumerated wire shapes; a full rewrite of that section belongs with the boundary-rework follow-up, not this output-contract doc pass. Historical learnings (docs/specs/learnings.md, docs/specs/002-beta/usage-learnings.md) legitimately record old shapes as history and were left untouched.
+
+All six touched docs lint clean (markdownlint-cli2, 0 issues); make build passes.

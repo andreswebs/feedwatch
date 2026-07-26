@@ -1,6 +1,6 @@
 ---
 id: fee-e4tl
-status: open
+status: closed
 deps: [fee-v737, fee-7hf3]
 links: []
 created: 2026-07-26T11:23:25Z
@@ -234,3 +234,7 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T17:00:33Z**
+
+Grew the schema command to the full ADR 0005 self-description. Bare 'feedwatch schema' now carries the reference core (tool, version, commands, a tool-level exit_codes []int union, and an errors inventory of {code,exit_code,hint}) alongside the retained feedwatch enrichment (per-command exit_codes map, derived output_schema, global_flags). errorInventory() projects terr.All() element-wise; exitCodeUnion() reads the per-command Schema.ExitCodes maps (sorted, deduped) so it cannot drift. SchemaError lives in internal/command (co-located with the other schema types, not internal/output). The schema command's own registry entry stayed a described Scalar rather than a reflected oneOf, because the json.RawMessage output_schema field reflects as a byte array; prose corrected. Added reciprocal conformance test TestRegisteredCodesDeclaredInTables plus schema tests for the inventory, the new-sentinel projection, the exit-code union, and tool/version. No schema e2e golden added (deferred to the fee-hlu7 in-process harness). Docs updated: usage.md schema section, manual-qa TC-SCHEMA-001/005, CHANGELOG, learnings. make build passes.

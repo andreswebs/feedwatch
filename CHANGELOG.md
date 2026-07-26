@@ -61,6 +61,21 @@ releases.
 
 ### Added
 
+- **`schema` now emits the full tool-level self-description**, adopting
+  [ADR 0005](docs/adr/0005-output-contract.md). Bare `feedwatch schema` gains
+  `tool`, `version`, a tool-level `exit_codes` array (the sorted union of every
+  command's declared codes), and an `errors` inventory of `{code, exit_code,
+  hint}` projected from the error registry, so the documented error surface
+  cannot drift from the real one. The existing per-command `exit_codes` map,
+  derived `output_schema`, and `global_flags` are retained as additive detail.
+- **A non-fatal NDJSON warning channel on stderr**, adopting
+  [ADR 0005](docs/adr/0005-output-contract.md). Advisories that do not change the
+  exit code are written to stderr as one JSON object per line, marked
+  `"level": "warning"` (instead of an `ok` field) so a consumer can tell them
+  apart from the error envelope. Warnings are contract output, not logs, so
+  `--quiet` does not suppress them. The first advisory is `feed_auto_disabled`,
+  raised by the `poll` that crosses the consecutive-failure threshold and
+  auto-disables a feed, carrying the feed URL and failure count in `details`.
 - **Every JSON result on stdout now opens with an envelope head**:
   `schema_version` (the output-contract version, an integer bumped on breaking
   shape changes) and `ok` (a boolean), followed by the command-specific payload,
@@ -68,3 +83,20 @@ releases.
   payload never serialize as `null`; an absent list is always `[]`. `--format
   text` output is unchanged and does not carry the head, and `export` still
   emits a bare OPML document rather than a JSON envelope.
+
+### Migration
+
+For an agent or script consuming the JSON contract, the breaking changes above
+require these updates:
+
+- Branch on whole-invocation failures by exit code 64-78 (per
+  [ADR 0001](docs/adr/0001-exit-code-taxonomy.md)), not exit 1.
+- Read a whole-invocation error's machine code from `error.code`, not from the
+  old top-level `error.category`; a feed-scoped error's `feed_url` and `status`
+  are now under `error.details`.
+- Read per-feed poll and check failures from the stdout result envelope's
+  `failures` array, not from the removed stderr `{"errors": [...]}` batch object;
+  each entry there still carries `feed_url`, `category`, `status`, and `message`.
+- Read the store schema version from a `migrate` result's `store_schema_version`,
+  not `schema_version` (now the envelope head), and read a `check` result's
+  passing-feed count from `passed`, not `ok`.

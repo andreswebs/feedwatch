@@ -1,0 +1,1 @@
+{"schema_version":1,"ok":true,"polled":1,"succeeded":0,"failed":1,"skipped":0,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[{"feed_url":"http://feedserver/feed.xml","category":"http","status":404,"message":"server returned HTTP 404"}],"renamed":[]}

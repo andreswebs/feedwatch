@@ -33,15 +33,26 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
 
 ## Output contract
 
-- stdout carries pure result JSON by default, in a consistent envelope per
-  command. Every result envelope opens with the same head: `schema_version` (the
-  output-contract version, an integer bumped on breaking shape changes) and `ok`
-  (a boolean), followed by the command-specific payload. Collections in the
-  payload never serialize as `null`: an absent list is always `[]`. `--format
-  text` switches to terminal-friendly tables (which omit the head); `--format
-  json` is the default and may be stated explicitly.
-- stderr carries structured JSON log lines and structured error objects. This
-  keeps stdout clean, so piping it into `jq` never trips over a diagnostic.
+- stdout carries exactly one newline-terminated result envelope per invocation,
+  and nothing else: never a log line, a warning, or a human-facing banner. Every
+  result envelope opens with the same head: `schema_version` (the output-contract
+  version, an integer bumped on breaking shape changes) and `ok` (a boolean),
+  followed by the command-specific payload. Collections in the payload never
+  serialize as `null`: an absent list is always `[]`. `--format text` switches to
+  terminal-friendly tables (which omit the head); `--format json` is the default
+  and may be stated explicitly.
+- stderr carries three distinguishable kinds of JSON object, and a consumer tells
+  them apart by which key is present, without inspecting a value:
+  - the **error envelope** (`ok: false` plus an `error` object), emitted at most
+    once, for a whole-invocation failure;
+  - **NDJSON warning lines** (`level: "warning"`), one JSON object per line, for
+    non-fatal advisories;
+  - **slog diagnostic records**, the ordinary logs.
+
+  The rule is: an `ok` key present means the error envelope; a `level` key
+  present means a warning; neither present means a log record. Keeping results on
+  stdout and everything else on stderr means piping stdout into `jq` never trips
+  over a diagnostic.
 - A hard, whole-invocation failure (bad arguments, unreachable store) writes a
   single JSON error object to stderr and nothing to stdout. An exception is a
   `poll` that fails partway through persisting fetched feeds: the envelope for
@@ -65,6 +76,14 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
   carries one; and `details` carries per-instance structure such as a feed
   failure's `feed_url` and `status`, present only when populated. An
   unclassified error renders `code` as `internal_error`.
+- Non-fatal advisories that do not change the exit code are written to stderr as
+  NDJSON warning objects, one per line, distinct from both logs and the error
+  envelope. A warning is a single JSON object of the form `{"schema_version",
+  "level": "warning", "code", "message", "hint"?, "details"?}`; it carries
+  `"level": "warning"` instead of an `ok` field, so a consumer can tell it apart
+  from the error envelope unambiguously. Warnings are contract output, not logs,
+  so `--quiet` does not suppress them. The one advisory raised today is
+  `feed_auto_disabled` (see `poll` and `disable`).
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
@@ -85,7 +104,7 @@ and never as the sole carrier of meaning. It is disabled by `--no-color`, by the
 ## Exit codes
 
 Distinct exit codes let an agent branch on the outcome without parsing output.
-They follow the family-wide taxonomy in
+They follow the taxonomy in
 [ADR 0001](adr/0001-exit-code-taxonomy.md): whole-invocation failures use the
 BSD `sysexits.h` range, while codes 2 and 3 are result sub-codes (the command
 completed and the code summarizes the poll outcome), not failures.
@@ -384,7 +403,17 @@ feedwatch discover https://example.com
 `disable` marks a feed so `poll` skips it; `enable` re-enables a disabled feed
 and resets its failure lifecycle so it is due again. A feed that hits the
 consecutive-failure threshold (default 10) is auto-disabled and surfaced in
-`list`; `enable` resumes it.
+`list`; `enable` resumes it. The poll that crosses the threshold also emits a
+`feed_auto_disabled` NDJSON warning on stderr, so an agent learns of the disable
+from the invocation that caused it rather than by later noticing the feed gone
+quiet:
+
+```json
+{"schema_version":1,"level":"warning","code":"feed_auto_disabled","message":"feed disabled after 10 consecutive failures","hint":"re-enable with: feedwatch enable <feed>","details":{"feed_url":"https://flaky.example/feed.xml","failures":10}}
+```
+
+The warning does not change the poll exit code (a poll where every targeted feed
+failed still exits 2), and it is emitted even under `--quiet`.
 
 ```sh
 feedwatch disable https://flaky.example/feed.xml
@@ -438,11 +467,23 @@ feedwatch migrate --status
 
 ### `schema [command]`
 
-Emit the machine-readable interface contract: for each command, its arguments
-and flags (name, type, default), exit codes, and a JSON Schema for its output
-envelope. `feedwatch schema <command>` narrows to one command.
+Emit the machine-readable interface contract. Bare `feedwatch schema` describes
+the whole tool: `tool` and `version`, a `commands` array, a tool-level
+`exit_codes` (the sorted union of every command's declared codes), an `errors`
+inventory, and the inherited `global_flags`. Each entry in `errors` is a
+`{code, exit_code, hint}` triple projected from the error registry, so the
+documented error surface cannot drift from the real one. For each command, its
+arguments and flags (name, type, default), its per-command `exit_codes` map, and
+a JSON Schema for its output envelope are reported. `feedwatch schema <command>`
+narrows to that one command.
 
 ```sh
+feedwatch schema
+# {"schema_version":1,"ok":true,"tool":"feedwatch","version":"1.0.0","commands":[...],
+#  "exit_codes":[0,2,3,64,65,69,70,78],
+#  "errors":[{"code":"usage_error","exit_code":64,"hint":"check the command arguments and flags; run the command with --help"}, ...],
+#  "global_flags":[...]}
+
 feedwatch schema poll
 # {"schema_version":1,"ok":true,"command":"poll","args":[],"flags":[{"name":"--force","aliases":["--all"],"type":"bool"}],
 #  "exit_codes":{"0":"all targeted feeds succeeded", ...},

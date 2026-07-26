@@ -118,7 +118,7 @@ func (d Deps) consumeSuccess(ctx context.Context, oc feedOutcome) ([]core.Item, 
 func (d Deps) recordFailure(ctx context.Context, oc feedOutcome) error {
 	base := effectiveInterval(oc.feed.Interval, 0, d.DefaultInterval)
 	if err := RecordFailure(ctx, d.Store, d.Clock, oc.feed.URL, oc.err.Category, oc.err.Error(),
-		d.FailureThreshold, base, d.MaxBackoff); err != nil {
+		d.FailureThreshold, base, d.MaxBackoff, d.Warn); err != nil {
 		return fmt.Errorf("record failure for %q: %w", oc.feed.URL, err)
 	}
 	return nil

@@ -3,7 +3,6 @@ package output
 import (
 	"fmt"
 	"io"
-	"os"
 	"reflect"
 	"strings"
 )
@@ -15,11 +14,15 @@ const (
 	SymbolOK = "✓"
 	// SymbolFail marks a failed outcome in text output.
 	SymbolFail = "✗"
+	// SymbolWarn marks a non-fatal advisory in text output. It is deliberately
+	// distinct from SymbolFail: a warning is not a failure.
+	SymbolWarn = "⚠"
 )
 
 const (
-	ansiReset = "\x1b[0m"
-	ansiRed   = "\x1b[31m"
+	ansiReset  = "\x1b[0m"
+	ansiRed    = "\x1b[31m"
+	ansiYellow = "\x1b[33m"
 )
 
 // TextRenderer is implemented by result values that render their own
@@ -39,9 +42,10 @@ type Renderer struct {
 }
 
 // NewRenderer builds a Renderer for the given format, resolving per-stream color
-// from the real terminal streams and the color policy. out and err are the
-// process streams (typically os.Stdout and os.Stderr).
-func NewRenderer(format string, out, err *os.File, p ColorPolicy) *Renderer {
+// from the writers and the color policy. out and err are the result and
+// diagnostic writers (typically os.Stdout and os.Stderr); color is enabled only
+// for a writer that probes as a terminal, so a plain buffer never gets color.
+func NewRenderer(format string, out, err io.Writer, p ColorPolicy) *Renderer {
 	return &Renderer{
 		Format:   format,
 		OutColor: ResolveColor(out, format, p),
@@ -71,6 +75,31 @@ func (r *Renderer) Error(err error) error {
 		return nil
 	}
 	return r.textError(err)
+}
+
+// Warn writes a non-fatal advisory to stderr, gating on format like Result and
+// Error: JSON emits the NDJSON warning line, text emits a marked human line. It
+// never writes to stdout and never changes the exit code, so it is the machine
+// contract for a state change a single invocation would otherwise leave
+// unobservable.
+func (r *Renderer) Warn(code, message, hint string, details any) {
+	if r.Format != "text" {
+		EmitWarning(r.Err, code, message, hint, details)
+		return
+	}
+	r.textWarn(message)
+}
+
+// textWarn writes one advisory line. The warn symbol is always present; yellow
+// is added only when the stream is colorized, so color is never the sole
+// carrier of the advisory signal. The symbol is not SymbolFail: a warning is
+// not a failure.
+func (r *Renderer) textWarn(message string) {
+	line := SymbolWarn + " " + message
+	if r.ErrColor {
+		line = ansiYellow + line + ansiReset
+	}
+	_, _ = fmt.Fprintln(r.Err, line)
 }
 
 // textError writes one failure line. The fail symbol is always present; red is

@@ -54,9 +54,23 @@ being polluted by logs or errors.
 
 - The system shall emit result data as JSON on stdout by default.
 - The system shall use a consistent top-level envelope across the stdout output
-  of all commands.
-- The system shall write log messages and error objects as structured JSON to
-  stderr.
+  of all commands, opening with a head of `schema_version` (an integer
+  output-contract version) and `ok` (a boolean), followed by the
+  command-specific payload.
+- The system shall never serialize a collection in a result envelope as `null`;
+  an absent list shall be `[]`.
+- WHEN a whole-invocation failure occurs, the system shall write a single error
+  envelope to stderr of the form `{schema_version, ok: false, error: {code,
+  message, hint?, details?}}`, where `code` is a stable machine code from the
+  error registry; the coarse per-feed error category shall not be used as this
+  code.
+- The system shall write non-fatal advisories to stderr as NDJSON warning
+  objects, one JSON object per line, each carrying `level: "warning"` in place
+  of an `ok` field so a consumer can distinguish a warning from the error
+  envelope by key presence; a warning shall not change the exit code.
+- The system shall write ordinary log messages to stderr as structured JSON
+  records distinct from the error envelope and warning objects (neither an `ok`
+  nor a `level` key present).
 - The system shall never write diagnostic, log, or error output to stdout.
 - The system shall accept a `--format` option with the values `json` and
   `text`, defaulting to `json`.
@@ -71,7 +85,9 @@ being polluted by logs or errors.
   status shall also be indicated by a symbol or text.
 - WHEN `--log-level` is set to error, warn, info, or debug, the system shall
   emit only log messages at or above the selected level.
-- WHERE `--quiet` is provided, the system shall suppress non-error log output.
+- WHERE `--quiet` is provided, the system shall suppress non-error log output;
+  it shall not suppress warning objects, which are contract output rather than
+  logs.
 
 ### 3. Outcome Signaling and Exit Codes
 
@@ -99,8 +115,10 @@ I can branch on the result without parsing output.
   sub-code).
 - WHEN some targeted feeds succeed and others fail, the system shall exit with
   code 3 (a result sub-code).
-- WHEN a per-feed failure occurs, the system shall report it on stderr as a
-  structured object including the feed URL, an error category, and a message.
+- WHEN a per-feed failure occurs, the system shall report it as result data in
+  the stdout result envelope's `failures` array, as a structured object
+  including the feed URL, an error category, and a message; per-feed failures
+  are not written to stderr as a batch object.
 - The system shall classify per-feed error categories as at least network, http,
   parse, and timeout.
 
@@ -508,3 +526,20 @@ or environment variable.
 | Item retention                      | unlimited (pruning is manual)   |
 | Minimum TLS version                 | 1.2                             |
 | Private-address redirects           | blocked                         |
+
+## Appendix B: Revision Notes
+
+The ADR-adoption pass corrected the acceptance criteria that described output
+shapes since removed. The criteria affected are:
+
+- Requirement 2 (Output Contract): the envelope-head criterion, the
+  no-`null`-collection criterion, and the stderr criteria were rewritten to
+  describe the adopted error envelope (`{schema_version, ok: false, error:
+  {code, message, hint?, details?}}`), the NDJSON warning channel, and the
+  key-presence rule that distinguishes error, warning, and log objects. The
+  `--quiet` criterion was clarified to note that warnings are contract output
+  and are not suppressed.
+- Requirement 3 (Outcome Signaling and Exit Codes): the per-feed failure
+  criterion was corrected to place per-feed failures in the stdout result
+  envelope's `failures` array rather than on stderr as a batch object, which no
+  longer exists.

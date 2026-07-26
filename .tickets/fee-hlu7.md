@@ -1,6 +1,6 @@
 ---
 id: fee-hlu7
-status: open
+status: closed
 deps: [fee-q120]
 links: []
 created: 2026-07-26T11:24:54Z
@@ -172,3 +172,48 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T17:12:15Z**
+
+Added the ADR 0006 in-process golden-triple harness in internal/command
+(golden_test.go + golden_scenarios_test.go, testdata/ tree). Scenarios call
+Run(args, deps) with bytes.Buffer streams and diff three artifacts per scenario:
+stdout golden, stderr golden, and the exit code (declared as the wantExit table
+value, the clearer form the design sanctioned). -update regenerates goldens.
+
+Normalization: feed-server host:port (<feedserver>), temp store path (<db>, used
+by the store-unavailable scenario), fetched_at (<fetched_at>), and the --version
+commit/go tokens. A fixed clock (FixedClock(pollFixedTime)) makes published_at
+and backoff deterministic. Stability across temp dirs is proven by the
+store-unavailable golden being identical from the -update run to a clean run in a
+fresh t.TempDir().
+
+Conformance: assertDeclared checks every observed exit against the union of the
+command exit-code tables at run time; TestGoldenExitCodeConformance asserts every
+declared code has a scenario. Codes covered by scenarios: 0, 2, 3, 64
+(err/usage_bad_flag), 65 (err/schema_too_new, set up by stamping MAX(version)+1
+into schema_migrations via a second sqlite connection), 69 (err/store_unavailable),
+78 (err/config_concurrency). Exit 70 (internal/unclassified) is intentionally
+uncovered with an explicit note: it is only reachable via an unclassified Go
+error or a recovered panic in main, neither deterministic from a real command.
+The data-only exit_conformance_test.go still passes and is now backed by these
+observed exits.
+
+Exec suite reduced to its conditional half: internal/e2e keeps only signal_test.go
+(130/143) plus TestMain/binPath/exitCodeOf/rssFeed it depends on. All stream-
+contract scenarios moved in-process and their exec goldens (the whole
+internal/e2e/testdata tree) were deleted rather than duplicated. The fee-udsl
+first-poll regression moved in-process as TestGoldenFirstPollReportsAllNewItems
+(JSON decode, never needed a process). doc.go updated.
+
+Golden meaning unchanged: every shared golden is byte-identical to the deleted
+exec golden except version.stdout, where in-process reports the injected
+Deps.Version ("1.2.3") vs the exec build's "dev" (-buildvcs=false). That is an
+injection-path value difference, not a contract change; there is no stream-
+interleaving difference since both harnesses keep stdout/stderr as separate sinks.
+
+Redundant-now (for a follow-up to retire, not done here): the JSON-shape decode
+assertions in add/list/items/poll/migrate/discover/export/import/prune _test.go
+and the error-code assertions in root_test.go and per-command usage tests are
+largely superseded by the golden scenarios + assertDeclared. Acceptance only
+required the old tests keep passing; they do. make build passes.

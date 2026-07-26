@@ -300,31 +300,34 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 - **Steps:** `feedwatch --concurrency 0 poll; echo $?` and
   `feedwatch bogus-command; echo $?`.
 - **Expected:** exit 78 (config) for the first and exit 64 (usage) for the
-  second; one JSON error object on stderr with category `config` and `usage`
+  second; one error envelope on stderr (`{schema_version, ok:false, error:{code,
+  message, hint?}}`) whose `error.code` is `config_error` and `usage_error`
   respectively.
 
 #### TC-EXIT-003: All targeted feeds fail exits 2 (P1)
 
 - **Preconditions:** subscribe two feeds whose fixture endpoints both return 404.
 - **Steps:** `feedwatch poll --all 2>err.json; echo $?`.
-- **Expected:** exit **2**; stderr lists each feed as a structured error object
-  with `feed_url`, `category` (`http`), `status` 404, and a message; stdout
-  envelope reports outcome counts.
+- **Expected:** exit **2**; the stdout envelope's `failures` array lists each
+  feed as a structured object with `feed_url`, `category` (`http`), `status` 404,
+  and a message, and reports the outcome counts; stderr carries no per-feed batch
+  object (a total-failure poll is a result, not a whole-invocation failure).
 
 #### TC-EXIT-004: Partial success exits 3 (P1)
 
 - **Preconditions:** one healthy fixture feed, one returning 500.
 - **Steps:** `feedwatch poll --all 2>err.json; echo $?`.
-- **Expected:** exit **3**; stdout reports the new items from the healthy feed;
-  stderr reports the failed feed.
+- **Expected:** exit **3**; stdout reports the new items from the healthy feed
+  and the failed feed in its `failures` array; stderr carries no per-feed batch
+  object.
 
 #### TC-EXIT-005: Per-feed error categories (P1)
 
 - **Steps:** trigger one feed each of: connection refused (network), 404 (http),
   malformed body served as a feed (parse), and a non-responding socket (timeout,
   with a short `--timeout`).
-- **Expected:** each stderr error object carries the correct `category` of
-  `network`, `http`, `parse`, or `timeout`.
+- **Expected:** each entry in the stdout `failures` array carries the correct
+  `category` of `network`, `http`, `parse`, or `timeout`.
 
 ---
 
@@ -333,8 +336,18 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-SCHEMA-001: `schema` describes every command (P0)
 
 - **Steps:** `feedwatch schema | jq -e .`.
-- **Expected:** machine-readable JSON listing every command with its args, flags
-  (name, type, default), exit codes, and an output schema; valid JSON; exit 0.
+- **Expected:** machine-readable JSON with `tool`, `version`, a `commands` array
+  (each with its args, flags, per-command exit-code map, and output schema), a
+  tool-level `exit_codes` array, an `errors` inventory of `{code, exit_code,
+  hint}`, and `global_flags`; valid JSON; exit 0.
+
+#### TC-SCHEMA-005: `schema` reports the error inventory (P1)
+
+- **Steps:** `feedwatch schema | jq -e '.errors[] | select(.code ==
+  "usage_error").exit_code == 64'`.
+- **Expected:** `errors` lists every registered coded error with its exit code
+  and hint, and the tool-level `exit_codes` array is the sorted union of every
+  command's declared codes (for example `[0,2,3,64,65,69,70,78]`).
 
 #### TC-SCHEMA-002: `schema <command>` narrows to one command (P1)
 
@@ -439,8 +452,8 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-STORE-002: Unwritable store reports store error (P1)
 
 - **Steps:** `feedwatch --db /nonexistent-dir/sub/fw.db migrate; echo $?`.
-- **Expected:** JSON error category `store` on stderr; exit 69 (store
-  unavailable); stdout empty.
+- **Expected:** an error envelope on stderr with `error.code`
+  `store_unavailable`; exit 69 (store unavailable); stdout empty.
 
 #### TC-STORE-003: Crash-safe under concurrent multi-feed poll (P2)
 
@@ -628,9 +641,10 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 - **Steps:**
   1. `feedwatch add "${REDIR}" 2>err.json; echo $?` -> rejected.
   2. `feedwatch --allow-private add "${REDIR}"; echo $?` -> permitted.
-- **Expected:** by default the redirect into private space is blocked (a
-  `usage`-category error on stderr citing the blocked redirect, since `add`
-  classifies a failed validation fetch as usage; exit 64; `list` unchanged); with
+- **Expected:** by default the redirect into private space is blocked (an error
+  envelope on stderr with `error.code` `usage_error` citing the blocked redirect,
+  since `add` classifies a failed validation fetch as usage; exit 64; `list`
+  unchanged); with
   `--allow-private` the redirect is followed to the loopback feed and the
   subscription is created (exit 0). The resolved address is re-checked on every
   hop. The block is also unit-tested by `TestCheckRedirectBlocksPublicToPrivate`.
@@ -829,6 +843,17 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 - **Expected:** feed disabled and skipped by poll; surfaced in `list` with
   failure count and last error.
 
+#### TC-FAIL-009: Auto-disable warning advisory on stderr (P1)
+
+- **Steps:** drive a feed to the failure threshold under `--quiet`; capture
+  stderr on the crossing poll.
+- **Expected:** exactly one NDJSON warning line on stderr,
+  `{"schema_version":1,"level":"warning","code":"feed_auto_disabled",...}` with
+  the feed URL and failure count in `details`; the warning fires only on the
+  crossing poll (not earlier failures), does not change the exit code (an
+  all-failed poll still exits 2), and appears despite `--quiet`. No warning is
+  written to stdout.
+
 #### TC-FAIL-007: Success resets failure state (P1)
 
 - **Steps:** after some failures, make the feed healthy and poll.
@@ -929,7 +954,8 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
   2. `feedwatch check myfeed` -- checked by alias.
   3. `feedwatch check https://no-such.example/feed.xml` -- unknown ref.
 - **Expected:** step 2 exits 0 and reports `checked=1`; step 3 exits 64 (usage)
-  with a usage-category JSON error on stderr and nothing on stdout.
+  with an error envelope on stderr whose `error.code` is `usage_error` and
+  nothing on stdout.
 
 #### TC-CHECK-003: All feeds pass -- exit 0, failures is empty list (P1)
 

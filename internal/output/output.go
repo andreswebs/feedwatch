@@ -100,6 +100,41 @@ func EmitError(w io.Writer, err error) {
 	_, _ = w.Write(append(data, '\n'))
 }
 
+// warningEnvelope is a non-fatal, machine-readable advisory written to stderr.
+// It carries level "warning" instead of an ok field, so a consumer can tell it
+// apart from the error envelope unambiguously, and it never changes the exit
+// code. Successive envelopes form a valid NDJSON stream, one object per line.
+type warningEnvelope struct {
+	SchemaVersion int    `json:"schema_version"`
+	Level         string `json:"level"`
+	Code          string `json:"code"`
+	Message       string `json:"message"`
+	Hint          string `json:"hint,omitempty"`
+	Details       any    `json:"details,omitempty"`
+}
+
+// EmitWarning writes a single newline-terminated ADR 0005 warning envelope to w.
+// It is the stderr NDJSON warning channel: a non-fatal advisory distinct from a
+// log record and from the error envelope, marked level "warning" so a consumer
+// can tell it apart. hint and details are omitted when empty. The write is
+// best-effort: a warning that fails to marshal is dropped rather than escalated,
+// since it never changes the outcome it advises about.
+func EmitWarning(w io.Writer, code, message, hint string, details any) {
+	env := warningEnvelope{
+		SchemaVersion: SchemaVersion,
+		Level:         "warning",
+		Code:          code,
+		Message:       message,
+		Hint:          hint,
+		Details:       details,
+	}
+	data, err := json.Marshal(env)
+	if err != nil {
+		return
+	}
+	_, _ = w.Write(append(data, '\n'))
+}
+
 // detailer is an optional interface for errors that expose a bare human message
 // distinct from their prefixed Error() string. FeedError implements it via
 // Detail(), so the envelope message stays free of the category/url/status

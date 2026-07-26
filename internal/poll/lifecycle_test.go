@@ -47,7 +47,7 @@ func TestRecordFailureBackoffGrowsExponentiallyAndCaps(t *testing.T) {
 	// 1m, 2m, 4m, 8m (cap), 8m (cap)
 	wants := []time.Duration{1 * time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 8 * time.Minute}
 	for i, want := range wants {
-		if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatTimeout, "timeout", 100, base, maxBackoff); err != nil {
+		if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatTimeout, "timeout", 100, base, maxBackoff, nil); err != nil {
 			t.Fatalf("RecordFailure #%d: %v", i+1, err)
 		}
 		f, err := s.GetFeed(ctx, url)
@@ -71,7 +71,7 @@ func TestRecordFailureDisablesAtThreshold(t *testing.T) {
 	const threshold = 3
 	base, maxBackoff := time.Minute, time.Hour
 	for i := 0; i < threshold-1; i++ {
-		if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff); err != nil {
+		if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff, nil); err != nil {
 			t.Fatalf("RecordFailure #%d: %v", i+1, err)
 		}
 		f, err := s.GetFeed(ctx, url)
@@ -82,7 +82,7 @@ func TestRecordFailureDisablesAtThreshold(t *testing.T) {
 			t.Errorf("after failure %d: Status = %q, want active", i+1, f.Status)
 		}
 	}
-	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff); err != nil {
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff, nil); err != nil {
 		t.Fatalf("RecordFailure at threshold: %v", err)
 	}
 	f, err := s.GetFeed(ctx, url)
@@ -102,13 +102,83 @@ func TestRecordFailureDisablesAtThreshold(t *testing.T) {
 	}
 }
 
+// A warning callback fires exactly once, on the failure that crosses the
+// threshold, and not on earlier failures; it carries the feed url and count.
+func TestRecordFailureWarnsOnceAtThreshold(t *testing.T) {
+	const url = "https://blog.example/feed.xml"
+	s := newStore(t, url, 0)
+	ctx := context.Background()
+
+	const threshold = 3
+	base, maxBackoff := time.Minute, time.Hour
+
+	var calls []map[string]any
+	warn := func(code, _, _ string, details any) {
+		if code != "feed_auto_disabled" {
+			t.Errorf("warn code = %q, want feed_auto_disabled", code)
+		}
+		if d, ok := details.(map[string]any); ok {
+			calls = append(calls, d)
+		} else {
+			t.Errorf("warn details = %T, want map[string]any", details)
+		}
+	}
+
+	for i := 0; i < threshold-1; i++ {
+		if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff, warn); err != nil {
+			t.Fatalf("RecordFailure #%d: %v", i+1, err)
+		}
+		if len(calls) != 0 {
+			t.Fatalf("warned before threshold, after failure %d", i+1)
+		}
+	}
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff, warn); err != nil {
+		t.Fatalf("RecordFailure at threshold: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("warned %d times, want exactly 1", len(calls))
+	}
+	if calls[0]["feed_url"] != url {
+		t.Errorf("warn feed_url = %v, want %q", calls[0]["feed_url"], url)
+	}
+	if calls[0]["failures"] != threshold {
+		t.Errorf("warn failures = %v, want %d", calls[0]["failures"], threshold)
+	}
+
+	// A further failure past the threshold does not warn again.
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", threshold, base, maxBackoff, warn); err != nil {
+		t.Fatalf("RecordFailure past threshold: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Errorf("warned %d times after crossing, want 1", len(calls))
+	}
+}
+
+// A nil warning callback is a no-op: the threshold crossing still disables.
+func TestRecordFailureNilWarnIsNoop(t *testing.T) {
+	const url = "https://blog.example/feed.xml"
+	s := newStore(t, url, 0)
+	ctx := context.Background()
+
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatHTTP, "503", 1, time.Minute, time.Hour, nil); err != nil {
+		t.Fatalf("RecordFailure: %v", err)
+	}
+	f, err := s.GetFeed(ctx, url)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if f.Status != core.FeedDisabled {
+		t.Errorf("Status = %q, want disabled", f.Status)
+	}
+}
+
 func TestRecordSuccessResetsFailureStateAndSchedulesInterval(t *testing.T) {
 	const url = "https://blog.example/feed.xml"
 	s := newStore(t, url, 30*time.Minute) // feed declares its own interval
 	ctx := context.Background()
 
 	// Accrue failure state first.
-	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatNetwork, "boom", 10, time.Minute, time.Hour); err != nil {
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatNetwork, "boom", 10, time.Minute, time.Hour, nil); err != nil {
 		t.Fatalf("RecordFailure: %v", err)
 	}
 
@@ -162,7 +232,7 @@ func TestRecordFailureFirstFailureSchedulesBaseBackoff(t *testing.T) {
 	ctx := context.Background()
 
 	base, maxBackoff := time.Minute, time.Hour
-	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatNetwork, "dns failure", 10, base, maxBackoff); err != nil {
+	if err := poll.RecordFailure(ctx, s, fixedClock, url, core.CatNetwork, "dns failure", 10, base, maxBackoff, nil); err != nil {
 		t.Fatalf("RecordFailure: %v", err)
 	}
 

@@ -1,0 +1,1 @@
+{"schema_version":1,"ok":false,"error":{"code":"usage_error","message":"flag provided but not defined: -bogus-flag","hint":"check the command arguments and flags; run the command with --help"}}

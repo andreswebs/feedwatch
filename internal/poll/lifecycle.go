@@ -2,6 +2,7 @@ package poll
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/andreswebs/feedwatch/internal/core"
@@ -36,7 +37,12 @@ func RecordSuccess(ctx context.Context, s store.Store, clk core.Clock, url strin
 // feed's rows are never written concurrently (poll serializes per feed), so
 // the stored count lands on the same value used for the backoff and disable
 // decision.
-func RecordFailure(ctx context.Context, s store.Store, clk core.Clock, url string, cat core.Category, msg string, threshold int, baseBackoff, maxBackoff time.Duration) error {
+// When this failure is the one that crosses threshold, RecordFailure raises the
+// auto-disable advisory through warn (a no-op when nil), so a caller learns of
+// the disable a single invocation would otherwise leave unobservable. It fires
+// exactly on the crossing (count == threshold), not on earlier or later
+// failures, and never writes to a stream itself.
+func RecordFailure(ctx context.Context, s store.Store, clk core.Clock, url string, cat core.Category, msg string, threshold int, baseBackoff, maxBackoff time.Duration, warn WarnFunc) error {
 	f, err := s.GetFeed(ctx, url)
 	if err != nil {
 		return err
@@ -48,7 +54,17 @@ func RecordFailure(ctx context.Context, s store.Store, clk core.Clock, url strin
 		return err
 	}
 	if threshold > 0 && count >= threshold {
-		return s.SetStatus(ctx, url, core.FeedDisabled)
+		if err := s.SetStatus(ctx, url, core.FeedDisabled); err != nil {
+			return err
+		}
+		if warn != nil && count == threshold {
+			warn(
+				"feed_auto_disabled",
+				fmt.Sprintf("feed disabled after %d consecutive failures", count),
+				"re-enable with: feedwatch enable <feed>",
+				map[string]any{"feed_url": url, "failures": count},
+			)
+		}
 	}
 	return nil
 }
