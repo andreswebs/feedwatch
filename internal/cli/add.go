@@ -9,6 +9,7 @@ import (
 
 	"github.com/andreswebs/feedwatch/internal/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
+	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/store"
 )
@@ -17,6 +18,7 @@ import (
 // minimum poll interval when set, and whether this invocation created the
 // subscription (false on an idempotent re-add).
 type AddResult struct {
+	output.Head
 	URL      string `json:"url"`
 	Alias    string `json:"alias,omitempty"`
 	Interval string `json:"interval,omitempty"`
@@ -85,7 +87,7 @@ func (d Deps) addAction(ctx context.Context, cmd *cliv3.Command) error {
 		return err
 	}
 
-	res := AddResult{URL: feed.URL, Alias: feed.Alias, Created: created}
+	res := AddResult{Head: output.OKHead(), URL: feed.URL, Alias: feed.Alias, Created: created}
 	if feed.Interval > 0 {
 		res.Interval = feed.Interval.String()
 	}

@@ -1,6 +1,6 @@
 ---
 id: fee-7hf3
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-26T11:17:21Z
@@ -254,3 +254,18 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T11:55:22Z**
+
+Adopted the ADR 0005 result envelope head across all stdout envelopes.
+
+Done:
+- output.SchemaVersion, output.Head, output.OKHead() added; every JSON result now opens with {"schema_version":1,"ok":true,...}.
+- Head embedded in all 17 result envelopes (incl. promoted VersionResult); null-coalescing MarshalJSON added to every collection-owning envelope (Poll, Check, List, Items, ProjectedItems, Discover, Import, Schema, CommandSchema). Removed the call-site make()/nil-guards that existed only to avoid null (check, poll x2, items).
+- jsonschema.structSchema now inlines anonymous embedded structs, so output_schema shows schema_version+ok at top level (required) with no Head property; migrate output_schema (OneOf) inherits it.
+- Generic renderText skips anonymous embedded fields, so --format text is byte-identical to before (pinned by TestRendererTextOmitsEmbeddedHead).
+- Key-collision renames (both breaking, in CHANGELOG): migrate schema_version -> store_schema_version; AND check ok(int) -> passed (NOT in original ticket, but the head's ok boolean would have silently shadowed it via encoding/json field-depth rule).
+
+Tests: new envelope table (head-leads + collections-never-null over all types), jsonschema inlining, renderText head-skip, output.OKHead tracer. Updated TestOutputSchemaContractPreserved, migrate_test, check_test. e2e goldens regenerated with -update: only the two leading keys per .stdout + migrate rename; no .stderr or exit-code change.
+
+Docs: usage.md (head note + all per-command examples + migrate/check renames), manual-qa.md shapes, CHANGELOG (Added: head; Changed: two breaking renames). export left as bare OPML (deliberate exception). make build green.

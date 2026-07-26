@@ -6,11 +6,13 @@ import (
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // EnableResult is the enable stdout envelope: the feed's state after it has been
 // re-enabled and its failure lifecycle reset.
 type EnableResult struct {
+	output.Head
 	Feed FeedView `json:"feed"`
 }
 
@@ -66,7 +68,7 @@ func (d Deps) enableAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err != nil {
 		return err
 	}
-	return r.Result(EnableResult{Feed: FeedView{
+	return r.Result(EnableResult{Head: output.OKHead(), Feed: FeedView{
 		URL:       updated.URL,
 		Alias:     updated.Alias,
 		Status:    string(updated.Status),

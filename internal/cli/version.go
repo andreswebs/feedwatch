@@ -24,12 +24,19 @@ func installVersionPrinter(version string) {
 	}
 }
 
+// VersionResult is the --version stdout envelope: the tool version, the VCS
+// commit stamped into the binary at build, and the Go toolchain. It is a JSON
+// result on stdout like any other command's, so it opens with the head.
+type VersionResult struct {
+	output.Head
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+	Go      string `json:"go"`
+}
+
 func writeVersion(w io.Writer, format, version string) error {
-	v := struct {
-		Version string `json:"version"`
-		Commit  string `json:"commit"`
-		Go      string `json:"go"`
-	}{
+	v := VersionResult{
+		Head:    output.OKHead(),
 		Version: version,
 		Commit:  vcsRevision(),
 		Go:      runtime.Version(),

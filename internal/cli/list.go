@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"text/tabwriter"
@@ -9,11 +10,23 @@ import (
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // ListResult is the list stdout envelope: one view per subscription.
 type ListResult struct {
+	output.Head
 	Feeds []FeedView `json:"feeds"`
+}
+
+// MarshalJSON coalesces feeds so it always serializes as [] rather than null.
+func (r ListResult) MarshalJSON() ([]byte, error) {
+	type alias ListResult
+	a := alias(r)
+	if a.Feeds == nil {
+		a.Feeds = []FeedView{}
+	}
+	return json.Marshal(a)
 }
 
 // FeedView is the agent-facing summary of one subscription: its canonical URL,
@@ -56,7 +69,7 @@ func (d Deps) listAction(ctx context.Context, _ *cliv3.Command) error {
 		return err
 	}
 
-	res := ListResult{Feeds: make([]FeedView, 0, len(feeds))}
+	res := ListResult{Head: output.OKHead(), Feeds: make([]FeedView, 0, len(feeds))}
 	for _, f := range feeds {
 		fv := FeedView{
 			URL:       f.URL,

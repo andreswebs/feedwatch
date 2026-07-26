@@ -76,14 +76,20 @@ func readFile(t *testing.T, f *os.File) string {
 	return string(b)
 }
 
-// errorPayload mirrors the stderr error shape so tests can assert on category
-// and message without depending on the output package's unexported type.
+// errEnvelope mirrors the ADR 0005 stderr error envelope so tests can assert on
+// code, message, hint, and the per-instance details without depending on the
+// output package's unexported types.
 type errEnvelope struct {
-	Error struct {
-		Category string `json:"category"`
-		FeedURL  string `json:"feed_url"`
-		Status   int    `json:"status"`
-		Message  string `json:"message"`
+	SchemaVersion int  `json:"schema_version"`
+	OK            bool `json:"ok"`
+	Error         struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+		Hint    string `json:"hint"`
+		Details struct {
+			FeedURL string `json:"feed_url"`
+			Status  int    `json:"status"`
+		} `json:"details"`
 	} `json:"error"`
 }
 
@@ -206,8 +212,8 @@ func TestActionConfigErrorExits78(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatConfig) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatConfig)
+	if env.Error.Code != core.ErrConfig.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrConfig.Code())
 	}
 	if env.Error.Message != "store path is not writable" {
 		t.Errorf("message = %q, want the action's message", env.Error.Message)
@@ -295,8 +301,8 @@ func TestInvalidFormatIsUsageError(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }
 
@@ -310,8 +316,8 @@ func TestInvalidConcurrencyIsConfigError(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatConfig) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatConfig)
+	if env.Error.Code != core.ErrConfig.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrConfig.Code())
 	}
 }
 
@@ -344,8 +350,8 @@ func TestCompletionUnknownShellIsUsageError(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }
 
@@ -427,7 +433,7 @@ func TestUnknownCommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }

@@ -131,14 +131,14 @@ func TestEnableUnknownRef(t *testing.T) {
 
 	var env struct {
 		Error struct {
-			Category string `json:"category"`
+			Code string `json:"code"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("error category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }
 

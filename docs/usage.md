@@ -34,7 +34,11 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
 ## Output contract
 
 - stdout carries pure result JSON by default, in a consistent envelope per
-  command. `--format text` switches to terminal-friendly tables; `--format
+  command. Every result envelope opens with the same head: `schema_version` (the
+  output-contract version, an integer bumped on breaking shape changes) and `ok`
+  (a boolean), followed by the command-specific payload. Collections in the
+  payload never serialize as `null`: an absent list is always `[]`. `--format
+  text` switches to terminal-friendly tables (which omit the head); `--format
   json` is the default and may be stated explicitly.
 - stderr carries structured JSON log lines and structured error objects. This
   keeps stdout clean, so piping it into `jq` never trips over a diagnostic.
@@ -43,27 +47,34 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
   `poll` that fails partway through persisting fetched feeds: the envelope for
   the feeds already persisted is still written to stdout (see `poll` below),
   since that work is durable and would otherwise never be reported.
-- Per-feed failures during a poll are reported on both streams. The stdout
-  envelope carries `succeeded` and `failed` counts and a `failures` list whose
-  entries hold the feed URL, an error `category` (`network`, `http`, `parse`,
-  `timeout`), a `message` with the underlying error detail (always present), and
-  an HTTP `status` (present only for `http` failures, omitted otherwise), so a
-  partial failure is fully triageable from stdout alone without parsing stderr.
+- Per-feed failures during a poll are result data, carried on stdout only. The
+  stdout envelope carries `succeeded` and `failed` counts and a `failures` list
+  whose entries hold the feed URL, an error `category` (`network`, `http`,
+  `parse`, `timeout`), a `message` with the underlying error detail (always
+  present), and an HTTP `status` (present only for `http` failures, omitted
+  otherwise), so a partial failure is fully triageable from stdout alone.
   `timeout` is its own `category`, so an agent need not inspect `message` to
-  distinguish a timeout from other network errors. stderr adds structured
-  per-feed objects with the same detail.
+  distinguish a timeout from other network errors. stderr carries no per-feed
+  batch object; it is reserved for whole-invocation error envelopes and logs.
+- A whole-invocation error envelope on stderr is a single JSON object of the
+  form `{"schema_version", "ok": false, "error": {"code", "message", "hint"?,
+  "details"?}}`. `code` is the stable machine code (for example `usage_error`,
+  `config_error`, `store_unavailable`, `schema_too_new`, `internal_error`, and
+  the feed-scoped `http_error`, `feed_unreachable`, `parse_error`,
+  `timeout_error`); `hint` is a remediation string, present only when the code
+  carries one; and `details` carries per-instance structure such as a feed
+  failure's `feed_url` and `status`, present only when populated. An
+  unclassified error renders `code` as `internal_error`.
 
 ```sh
 feedwatch poll 2>err.json; echo "exit=$?"
-# stdout: {"polled":3,"succeeded":2,"failed":1,"skipped":0,"fetched":10,"new_items":2,"deduped":8,
+# stdout: {"schema_version":1,"ok":true,"polled":3,"succeeded":2,"failed":1,"skipped":0,"fetched":10,"new_items":2,"deduped":8,
 #          "items":[...],
 #          "failures":[{"feed_url":"...","category":"http","status":404,"message":"server returned HTTP 404"},
 #                      {"feed_url":"...","category":"network","message":"dial tcp: connection refused"}],
 #          "renamed":[]}
-# err.json: {"errors":[{"feed_url":"...","category":"http","status":404,
-#                       "message":"server returned HTTP 404"},
-#                      {"feed_url":"...","category":"network",
-#                       "message":"dial tcp: connection refused"}]}
+# err.json: empty (a partial poll is not a whole-invocation failure; the
+#           per-feed detail is on stdout in the failures array)
 # exit=3
 ```
 
@@ -161,7 +172,7 @@ Options:
 
 ```sh
 feedwatch add https://blog.go.dev/feed.atom --alias godev --interval 30m
-# {"url":"https://blog.go.dev/feed.atom","alias":"godev","interval":"30m0s","created":true}
+# {"schema_version":1,"ok":true,"url":"https://blog.go.dev/feed.atom","alias":"godev","interval":"30m0s","created":true}
 ```
 
 ### `rm <url|alias>`
@@ -170,7 +181,7 @@ Unsubscribe a feed by URL or unique alias, removing its stored items.
 
 ```sh
 feedwatch rm godev
-# {"removed":"https://blog.go.dev/feed.atom"}
+# {"schema_version":1,"ok":true,"removed":"https://blog.go.dev/feed.atom"}
 ```
 
 ### `list`
@@ -179,7 +190,7 @@ List subscriptions with their health.
 
 ```sh
 feedwatch list
-# {"feeds":[{"url":"...","alias":"godev","interval":"30m0s","status":"active","failures":0},
+# {"schema_version":1,"ok":true,"feeds":[{"url":"...","alias":"godev","interval":"30m0s","status":"active","failures":0},
 #           {"url":"...","status":"disabled","failures":12,"last_error":"dns: no such host"}]}
 ```
 
@@ -220,9 +231,9 @@ as an unreachable store, exit 69, or an unknown named feed, a usage error, exit
 
 ```sh
 feedwatch poll          # only due feeds
-# {"polled":2,"succeeded":2,"failed":0,"skipped":1,"fetched":4,"new_items":4,"deduped":0,"items":[...],"failures":[]}
+# {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":1,"fetched":4,"new_items":4,"deduped":0,"items":[...],"failures":[]}
 feedwatch poll          # immediately again
-# {"polled":0,"succeeded":0,"failed":0,"skipped":3,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[]}
+# {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":3,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[]}
 ```
 
 ### `check [feed...]`
@@ -238,7 +249,7 @@ and the response body is parsed with the shared parser. No items are stored, no
 ETags or schedule timestamps are written, and the failure-lifecycle counters are
 not updated. The command is read-only from the store's perspective.
 
-The envelope reports `checked` feeds attempted, `ok` feeds that fetched and
+The envelope reports `checked` feeds attempted, `passed` feeds that fetched and
 parsed cleanly, `failed` feeds that did not, and a `failures` list (always
 present, empty when no feed failed) with one `{feed_url, category, message,
 status?}` entry per failed feed -- the same shape as the poll failures list.
@@ -253,9 +264,9 @@ Exit codes mirror `poll`:
 
 ```sh
 feedwatch check
-# {"checked":3,"ok":3,"failed":0,"failures":[]}
+# {"schema_version":1,"ok":true,"checked":3,"passed":3,"failed":0,"failures":[]}
 feedwatch check https://dead.example/feed.xml
-# {"checked":1,"ok":0,"failed":1,"failures":[{"feed_url":"...","category":"network","message":"..."}]}
+# {"schema_version":1,"ok":true,"checked":1,"passed":0,"failed":1,"failures":[{"feed_url":"...","category":"network","message":"..."}]}
 ```
 
 Typical use as a cron health check after `import --no-validate`:
@@ -364,7 +375,7 @@ candidate by actually parsing it. Each candidate is tagged with a `source` of
 
 ```sh
 feedwatch discover https://example.com
-# {"candidates":[{"title":"Blog","url":".../feed.xml",
+# {"schema_version":1,"ok":true,"candidates":[{"title":"Blog","url":".../feed.xml",
 #   "type":"application/atom+xml","source":"autodiscovery"}]}
 ```
 
@@ -401,7 +412,7 @@ Options:
 
 ```sh
 feedwatch import subs.opml
-# {"added":40,"skipped":3,"failed":[{"xmlUrl":"https://dead/feed","reason":"could not fetch ..."}]}
+# {"schema_version":1,"ok":true,"added":40,"skipped":3,"failed":[{"xmlUrl":"https://dead/feed","reason":"could not fetch ..."}]}
 feedwatch import --no-validate subs.opml   # fast bulk-add, no reachability check
 feedwatch export -o backup.opml
 feedwatch export | curl ...
@@ -420,9 +431,9 @@ Options:
 
 ```sh
 feedwatch migrate
-# {"applied":1,"schema_version":1}
+# {"schema_version":1,"ok":true,"applied":1,"store_schema_version":1}
 feedwatch migrate --status
-# {"schema_version":1,"pending":0,"backend":"sqlite"}
+# {"schema_version":1,"ok":true,"store_schema_version":1,"pending":0,"backend":"sqlite"}
 ```
 
 ### `schema [command]`
@@ -433,7 +444,7 @@ envelope. `feedwatch schema <command>` narrows to one command.
 
 ```sh
 feedwatch schema poll
-# {"command":"poll","args":[],"flags":[{"name":"--force","aliases":["--all"],"type":"bool"}],
+# {"schema_version":1,"ok":true,"command":"poll","args":[],"flags":[{"name":"--force","aliases":["--all"],"type":"bool"}],
 #  "exit_codes":{"0":"all targeted feeds succeeded", ...},
 #  "output_schema":{ ... JSON Schema ... }}
 ```

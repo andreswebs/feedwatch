@@ -4,11 +4,14 @@ import (
 	"context"
 
 	cliv3 "github.com/urfave/cli/v3"
+
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // RmResult is the rm stdout envelope: the canonical URL of the removed
 // subscription.
 type RmResult struct {
+	output.Head
 	Removed string `json:"removed"`
 }
 
@@ -51,5 +54,5 @@ func (d Deps) rmAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err := st.RemoveFeed(ctx, feed.URL); err != nil {
 		return err
 	}
-	return r.Result(RmResult{Removed: feed.URL})
+	return r.Result(RmResult{Head: output.OKHead(), Removed: feed.URL})
 }

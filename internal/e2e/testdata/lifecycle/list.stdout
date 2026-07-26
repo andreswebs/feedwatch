@@ -1,1 +1,1 @@
-{"feeds":[{"url":"http://feedserver/feed.xml","alias":"example","status":"active","failures":0}]}
+{"schema_version":1,"ok":true,"feeds":[{"url":"http://feedserver/feed.xml","alias":"example","status":"active","failures":0}]}

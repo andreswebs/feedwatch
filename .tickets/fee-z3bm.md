@@ -1,6 +1,6 @@
 ---
 id: fee-z3bm
-status: open
+status: closed
 deps: [fee-v737, fee-7hf3]
 links: []
 created: 2026-07-26T11:21:36Z
@@ -259,3 +259,7 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T12:08:54Z**
+
+Reshaped the stderr error emission to the ADR 0005 envelope and removed the per-feed batch form. output.EmitError(w, err) now writes {schema_version, ok:false, error:{code, message, hint?, details?}}, resolving code+hint via terr.Coded and details via terr.Detailed; an unclassified error renders internal_error (exit 70). Deleted output.WriteError/WriteErrors and Renderer.Errors; Renderer.Error now takes a plain error. Two deviations from the go-cookiecutter reference were required: (1) the envelope message is resolved through a detailer{Detail() string} interface so FeedError's text-only 'category url (status):' prefix does not leak into the machine message; (2) core.FeedError.ErrorDetails() now returns nil (not an empty struct) when the error has no feed scope, so 'details' is omitted rather than rendered as {} for whole-invocation usage/config errors. Per-feed failures are now stdout-only result data (poll/check failures[] unchanged: feed_url, category, status, message); the all_failed and partial e2e poll.stderr goldens regenerated to empty with poll.stdout and exits 2/3 unchanged. feedErrorFor replaced by boundaryError, preserving the context.Canceled/DeadlineExceeded -> timeout mapping (pinned by TestBoundaryErrorContextCancellationIsNotInternal). Updated docs/usage.md, CHANGELOG.md (one breaking entry), and learnings. make build passes.

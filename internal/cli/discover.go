@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
@@ -11,12 +12,24 @@ import (
 
 	"github.com/andreswebs/feedwatch/internal/core"
 	"github.com/andreswebs/feedwatch/internal/discover"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // DiscoverResult is the discover stdout envelope: the candidate feeds found for a
 // URL, each validated by parsing and tagged with how it was found.
 type DiscoverResult struct {
+	output.Head
 	Candidates []discover.Candidate `json:"candidates"`
+}
+
+// MarshalJSON coalesces candidates so it always serializes as [] rather than null.
+func (r DiscoverResult) MarshalJSON() ([]byte, error) {
+	type alias DiscoverResult
+	a := alias(r)
+	if a.Candidates == nil {
+		a.Candidates = []discover.Candidate{}
+	}
+	return json.Marshal(a)
 }
 
 // discoverCommand registers the discover subcommand: a read-only lister of
@@ -57,7 +70,7 @@ func (d Deps) discoverAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err != nil {
 		return err
 	}
-	return r.Result(DiscoverResult{Candidates: candidates})
+	return r.Result(DiscoverResult{Head: output.OKHead(), Candidates: candidates})
 }
 
 // validateDiscoverURL rejects anything that is not an absolute http(s) URL so

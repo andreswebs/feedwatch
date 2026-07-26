@@ -9,10 +9,12 @@ import (
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // PruneResult is the prune stdout envelope: the number of item rows tombstoned.
 type PruneResult struct {
+	output.Head
 	Pruned int `json:"pruned"`
 }
 
@@ -56,7 +58,7 @@ func (d Deps) pruneAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err != nil {
 		return err
 	}
-	return r.Result(PruneResult{Pruned: pruned})
+	return r.Result(PruneResult{Head: output.OKHead(), Pruned: pruned})
 }
 
 // buildPrunePolicy translates the flags into a core.PrunePolicy. --keep-days N

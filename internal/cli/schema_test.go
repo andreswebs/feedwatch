@@ -176,8 +176,8 @@ func TestSchemaUnknownCommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }
 
@@ -289,21 +289,27 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 	feedViewProps := []string{"url", "alias", "interval", "status", "failures", "last_error"}
 	feedViewReq := []string{"url", "status", "failures"}
 
-	// Plain-object commands: top-level properties and required.
+	// head is the schema_version/ok pair that opens every envelope; it is
+	// required and appears at the top level of each reflected result.
+	head := []string{"schema_version", "ok"}
+	withHead := func(fields ...string) []string { return append(append([]string(nil), head...), fields...) }
+
+	// Plain-object commands: top-level properties and required, each opening
+	// with the head.
 	objects := map[string]struct {
 		props    []string
 		required []string
 	}{
-		"add":      {[]string{"url", "alias", "interval", "created"}, []string{"url", "created"}},
-		"list":     {[]string{"feeds"}, []string{"feeds"}},
-		"rm":       {[]string{"removed"}, []string{"removed"}},
-		"enable":   {[]string{"feed"}, []string{"feed"}},
-		"disable":  {[]string{"feed"}, []string{"feed"}},
-		"prune":    {[]string{"pruned"}, []string{"pruned"}},
-		"items":    {[]string{"items", "omitted_no_date"}, []string{"items"}},
-		"poll":     {[]string{"polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"}, []string{"polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"}},
-		"discover": {[]string{"candidates"}, []string{"candidates"}},
-		"import":   {[]string{"added", "skipped", "failed"}, []string{"added", "skipped", "failed"}},
+		"add":      {withHead("url", "alias", "interval", "created"), withHead("url", "created")},
+		"list":     {withHead("feeds"), withHead("feeds")},
+		"rm":       {withHead("removed"), withHead("removed")},
+		"enable":   {withHead("feed"), withHead("feed")},
+		"disable":  {withHead("feed"), withHead("feed")},
+		"prune":    {withHead("pruned"), withHead("pruned")},
+		"items":    {withHead("items", "omitted_no_date"), withHead("items")},
+		"poll":     {withHead("polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"), withHead("polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed")},
+		"discover": {withHead("candidates"), withHead("candidates")},
+		"import":   {withHead("added", "skipped", "failed"), withHead("added", "skipped", "failed")},
 	}
 	for name, want := range objects {
 		p := parseSchema(t, registryFor(name).output)
@@ -359,9 +365,9 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 		t.Fatalf("migrate oneOf has %d alternatives, want 2", len(mig.OneOf))
 	}
 	assertContract(t, "migrate.applied", parseSchema(t, mig.OneOf[0]),
-		[]string{"applied", "schema_version"}, []string{"applied", "schema_version"})
+		withHead("applied", "store_schema_version"), withHead("applied", "store_schema_version"))
 	assertContract(t, "migrate.status", parseSchema(t, mig.OneOf[1]),
-		[]string{"schema_version", "pending", "backend"}, []string{"schema_version", "pending", "backend"})
+		withHead("store_schema_version", "pending", "backend"), withHead("store_schema_version", "pending", "backend"))
 
 	// export and schema are non-object scalars carrying a description.
 	exp := parseSchema(t, registryFor("export").output)

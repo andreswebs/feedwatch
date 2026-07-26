@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/poll"
 )
 
@@ -29,6 +31,7 @@ type PollFailure struct {
 // stdout alone; the full per-feed detail (including the human message) is still
 // written to stderr.
 type PollResult struct {
+	output.Head
 	Polled    int               `json:"polled"`
 	Succeeded int               `json:"succeeded"`
 	Failed    int               `json:"failed"`
@@ -39,6 +42,23 @@ type PollResult struct {
 	Items     []core.Item       `json:"items"`
 	Failures  []PollFailure     `json:"failures"`
 	Renamed   []core.FeedRename `json:"renamed"`
+}
+
+// MarshalJSON coalesces the owned collections so items, failures, and renamed
+// always serialize as [] rather than null.
+func (r PollResult) MarshalJSON() ([]byte, error) {
+	type alias PollResult
+	a := alias(r)
+	if a.Items == nil {
+		a.Items = []core.Item{}
+	}
+	if a.Failures == nil {
+		a.Failures = []PollFailure{}
+	}
+	if a.Renamed == nil {
+		a.Renamed = []core.FeedRename{}
+	}
+	return json.Marshal(a)
 }
 
 // pollCommand registers the poll subcommand: fetch the due feeds (or the named
@@ -113,12 +133,6 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 			"count", len(result.Renamed))
 	}
 
-	if len(feedErrs) > 0 {
-		if err := r.Errors(feedErrs); err != nil {
-			return err
-		}
-	}
-
 	if code := result.ExitCode(); code != 0 {
 		return exitError{code: code}
 	}
@@ -129,7 +143,7 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 // per-feed errors, shared by the success and mid-persist-failure paths so
 // they cannot drift.
 func shapePollResult(result poll.Result, feedErrs []*core.FeedError) PollResult {
-	failures := make([]PollFailure, 0, len(feedErrs))
+	var failures []PollFailure
 	for _, fe := range feedErrs {
 		failures = append(failures, PollFailure{
 			FeedURL:  fe.FeedURL,
@@ -139,10 +153,8 @@ func shapePollResult(result poll.Result, feedErrs []*core.FeedError) PollResult 
 		})
 	}
 
-	renamed := make([]core.FeedRename, 0, len(result.Renamed))
-	renamed = append(renamed, result.Renamed...)
-
 	return PollResult{
+		Head:      output.OKHead(),
 		Polled:    result.Polled,
 		Succeeded: result.Polled - result.Failed,
 		Failed:    result.Failed,
@@ -152,6 +164,6 @@ func shapePollResult(result poll.Result, feedErrs []*core.FeedError) PollResult 
 		Deduped:   result.Deduped,
 		Items:     result.Items,
 		Failures:  failures,
-		Renamed:   renamed,
+		Renamed:   result.Renamed,
 	}
 }

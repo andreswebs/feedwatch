@@ -1,6 +1,6 @@
 ---
 id: fee-v737
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-26T11:17:21Z
@@ -265,3 +265,23 @@ Cross-cutting requirements for this ticket (from the approved plan at .local/pla
 - Record non-obvious decisions and discoveries in docs/specs/001-initial-implementation/learnings.md under this ticket heading, and add a `tk add-note` summary before closing.
 - Ticket markdown must lint clean: `markdownlint-cli2 --fix ".tickets/*.md"` then `markdownlint-cli2 ".tickets/*.md"` reporting 0 errors.
 - Full plan context, including the seven owner decisions (D1-D7) this work implements, is in .local/planning/adr-adoption.md.
+
+**2026-07-26T11:37:29Z**
+
+Implemented internal/terr (Coded, Detailed, E, New, Newf, All, Wrap, WithDetails, Is, Unwrap) with duplicate-code panic and copy-on-write immutability. Layered onto core.FeedError: per-Category class sentinels supply Code/ExitCode/Hint, and FeedError.Is delegates class identity while Unwrap still reaches the cause; ErrorDetails() returns {feed_url,status} with omitempty. Moved core.ExitCodeFor -> output.ExitCodeFor (resolves terr.Coded via errors.As, fallback 70). Cleared 'family-wide' wording in core and CHANGELOG.
+
+FINAL CODE LIST (registered via terr.New, published as contract by later tickets), in registration order:
+
+- usage_error (exit 64) = core.ErrUsage
+- schema_too_new (exit 65) = core.ErrSchemaTooNew
+- store_unavailable (exit 69) = core.ErrStoreUnavailable
+- config_error (exit 78) = core.ErrConfig
+- internal_error (exit 70) = core.ErrInternal
+- http_error (exit 70) = core.ErrHTTP (CatHTTP)
+- feed_unreachable (exit 70) = core.ErrNetwork (CatNetwork)
+- parse_error (exit 70) = core.ErrParse (CatParse)
+- timeout_error (exit 70) = core.ErrTimeout (CatTimeout)
+
+STRAY FEED-SCOPED GUARANTEE: feed-scoped class sentinels carry exit 70 (never 0). A feed-scoped FeedError reaching the whole-invocation boundary is a bug path and classifies loudly as exit 70 (internal-error class) via output.ExitCodeFor, never a silent 0. Feed failures normally travel in stdout failures[] arrays and drive the aggregate poll/check codes 2/3, never returned to the boundary as coded errors. exit_conformance table inputs unchanged (64/65/69/78/70).
+
+GOTCHA (see learnings): FeedError.ExitCode() makes it satisfy cli.ExitCoder; exitErrHandler now matches the concrete exitError type instead of the cli.ExitCoder interface so hard FeedErrors are still rendered to stderr. e2e goldens byte-identical (suite not run with -update).

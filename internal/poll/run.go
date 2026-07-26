@@ -68,7 +68,7 @@ type Result struct {
 // Codes 2 and 3 are result sub-codes in the sense of ADR 0001
 // (docs/adr/0001-exit-code-taxonomy.md): the command completed and the code
 // summarizes the outcome; they are not whole-invocation failures, which use the
-// sysexits.h range (see core.ExitCodeFor).
+// sysexits.h range (see output.ExitCodeFor).
 func (r Result) ExitCode() int {
 	if r.Polled == 0 || r.Failed == 0 {
 		return 0

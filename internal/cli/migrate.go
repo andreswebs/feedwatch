@@ -4,21 +4,28 @@ import (
 	"context"
 
 	cliv3 "github.com/urfave/cli/v3"
+
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
-// MigrateStatus is the migrate --status envelope: the applied schema version,
-// how many migrations remain, and which backend is in use.
+// MigrateStatus is the migrate --status envelope: the applied store schema
+// version, how many migrations remain, and which backend is in use. The store
+// schema version is named store_schema_version to avoid colliding with the
+// head's schema_version (the output-contract version).
 type MigrateStatus struct {
-	SchemaVersion int    `json:"schema_version"`
-	Pending       int    `json:"pending"`
-	Backend       string `json:"backend"`
+	output.Head
+	StoreSchemaVersion int    `json:"store_schema_version"`
+	Pending            int    `json:"pending"`
+	Backend            string `json:"backend"`
 }
 
 // MigrateApplied is the bare migrate envelope: how many migrations were applied
-// and the resulting schema version.
+// and the resulting store schema version (named store_schema_version to avoid
+// colliding with the head's schema_version).
 type MigrateApplied struct {
-	Applied       int `json:"applied"`
-	SchemaVersion int `json:"schema_version"`
+	output.Head
+	Applied            int `json:"applied"`
+	StoreSchemaVersion int `json:"store_schema_version"`
 }
 
 // migrateCommand registers the migrate subcommand: bare migrate applies pending
@@ -67,7 +74,7 @@ func (d Deps) migrateAction(ctx context.Context, cmd *cliv3.Command) error {
 		if err != nil {
 			return err
 		}
-		return r.Result(MigrateStatus{SchemaVersion: version, Pending: pending, Backend: backend})
+		return r.Result(MigrateStatus{Head: output.OKHead(), StoreSchemaVersion: version, Pending: pending, Backend: backend})
 	}
 
 	applied, err := st.Migrate(ctx)
@@ -78,5 +85,5 @@ func (d Deps) migrateAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err != nil {
 		return err
 	}
-	return r.Result(MigrateApplied{Applied: applied, SchemaVersion: version})
+	return r.Result(MigrateApplied{Head: output.OKHead(), Applied: applied, StoreSchemaVersion: version})
 }

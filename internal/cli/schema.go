@@ -5,18 +5,38 @@ import (
 	"encoding/json"
 
 	cliv3 "github.com/urfave/cli/v3"
+
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // CommandSchema is the machine-readable description of one command: its
 // positional arguments and flags (introspected from the live command tree) plus
 // its exit codes and output JSON Schema (from the per-command registry, which
-// holds only what introspection cannot derive).
+// holds only what introspection cannot derive). It carries the envelope head
+// because schema --command CMD renders it as a top-level result; the same head
+// therefore also appears on each CommandSchema nested in a SchemaResult, which
+// is self-describing and harmless.
 type CommandSchema struct {
+	output.Head
 	Command   string            `json:"command"`
 	Args      []ArgSchema       `json:"args"`
 	Flags     []FlagSchema      `json:"flags"`
 	ExitCodes map[string]string `json:"exit_codes"`
 	Output    json.RawMessage   `json:"output_schema"`
+}
+
+// MarshalJSON coalesces args and flags so each always serializes as [] rather
+// than null.
+func (c CommandSchema) MarshalJSON() ([]byte, error) {
+	type alias CommandSchema
+	a := alias(c)
+	if a.Args == nil {
+		a.Args = []ArgSchema{}
+	}
+	if a.Flags == nil {
+		a.Flags = []FlagSchema{}
+	}
+	return json.Marshal(a)
 }
 
 // ArgSchema describes a single positional argument. Variadic is true for a
@@ -38,8 +58,23 @@ type FlagSchema struct {
 // SchemaResult is the bare-schema envelope: every command's schema plus the
 // global flags inherited by all of them.
 type SchemaResult struct {
+	output.Head
 	Commands    []CommandSchema `json:"commands"`
 	GlobalFlags []FlagSchema    `json:"global_flags"`
+}
+
+// MarshalJSON coalesces commands and global_flags so each always serializes as
+// [] rather than null.
+func (r SchemaResult) MarshalJSON() ([]byte, error) {
+	type alias SchemaResult
+	a := alias(r)
+	if a.Commands == nil {
+		a.Commands = []CommandSchema{}
+	}
+	if a.GlobalFlags == nil {
+		a.GlobalFlags = []FlagSchema{}
+	}
+	return json.Marshal(a)
 }
 
 // schemaCommand registers the schema subcommand: emit the machine-readable
@@ -69,6 +104,7 @@ func (d Deps) schemaAction(ctx context.Context, cmd *cliv3.Command) error {
 	}
 
 	result := SchemaResult{
+		Head:        output.OKHead(),
 		Commands:    commandSchemas(root),
 		GlobalFlags: flagSchemas(root.Flags),
 	}
@@ -113,6 +149,7 @@ func skipCommand(c *cliv3.Command) bool {
 func commandSchema(c *cliv3.Command) CommandSchema {
 	meta := registryFor(c.Name)
 	return CommandSchema{
+		Head:      output.OKHead(),
 		Command:   c.Name,
 		Args:      argSchemas(c.Arguments),
 		Flags:     flagSchemas(c.Flags),

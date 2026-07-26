@@ -76,11 +76,29 @@ func reflectType(t reflect.Type) json.RawMessage {
 // object schema. A field is required unless its json tag carries ",omitempty";
 // a json:"-" field is skipped; a jsonschema:"opaque" field halts recursion.
 func reflectStruct(t reflect.Type) json.RawMessage {
+	return marshal(structSchema(t))
+}
+
+// structSchema builds the object schema for a struct type. An anonymous embedded
+// struct with no json tag (such as an embedded envelope head) is inlined: its
+// properties and required entries merge into the parent object rather than
+// nesting under the embedded type's name, matching how encoding/json flattens
+// such a field.
+func structSchema(t reflect.Type) schema {
 	s := schema{Type: "object", Properties: map[string]json.RawMessage{}}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
+		}
+		if f.Anonymous && f.Tag.Get("json") == "" {
+			if es, ok := embeddedStructSchema(f.Type); ok {
+				for k, v := range es.Properties {
+					s.Properties[k] = v
+				}
+				s.Required = append(s.Required, es.Required...)
+				continue
+			}
 		}
 		name, omitempty, skip := jsonField(f)
 		if skip {
@@ -95,7 +113,20 @@ func reflectStruct(t reflect.Type) json.RawMessage {
 			s.Required = append(s.Required, name)
 		}
 	}
-	return marshal(s)
+	return s
+}
+
+// embeddedStructSchema resolves an anonymous field's type to its object schema,
+// following pointers. It reports false for a non-struct (or time.Time) so a
+// scalar embedded field falls through to normal field handling.
+func embeddedStructSchema(t reflect.Type) (schema, bool) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || t == timeType {
+		return schema{}, false
+	}
+	return structSchema(t), true
 }
 
 // jsonField resolves a struct field's schema property name and whether it is

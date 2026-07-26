@@ -156,7 +156,7 @@ func TestDiscoverBadURLIsUsageError(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 }

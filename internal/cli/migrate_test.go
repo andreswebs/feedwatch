@@ -34,8 +34,8 @@ func TestMigrateStatusFreshDB(t *testing.T) {
 	if st.Backend != "sqlite" {
 		t.Errorf("backend = %q, want sqlite", st.Backend)
 	}
-	if st.SchemaVersion < 1 {
-		t.Errorf("schema_version = %d, want >= 1 after ensuring schema", st.SchemaVersion)
+	if st.StoreSchemaVersion < 1 {
+		t.Errorf("schema_version = %d, want >= 1 after ensuring schema", st.StoreSchemaVersion)
 	}
 	if st.Pending != 0 {
 		t.Errorf("pending = %d, want 0 after ensuring schema", st.Pending)
@@ -64,8 +64,8 @@ func TestMigrateStatusIdempotent(t *testing.T) {
 	if err := json.Unmarshal([]byte(second.out), &b); err != nil {
 		t.Fatalf("second status is not a MigrateStatus object: %v\ngot: %q", err, second.out)
 	}
-	if b.SchemaVersion != a.SchemaVersion {
-		t.Errorf("schema_version drifted between runs: %d then %d", a.SchemaVersion, b.SchemaVersion)
+	if b.StoreSchemaVersion != a.StoreSchemaVersion {
+		t.Errorf("schema_version drifted between runs: %d then %d", a.StoreSchemaVersion, b.StoreSchemaVersion)
 	}
 	if b.Pending != 0 {
 		t.Errorf("second run pending = %d, want 0", b.Pending)
@@ -90,8 +90,8 @@ func TestMigrateUnwritableDBExits69(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not a JSON error object: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatStore) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatStore)
+	if env.Error.Code != core.ErrStoreUnavailable.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrStoreUnavailable.Code())
 	}
 }
 
@@ -112,8 +112,8 @@ func TestMigrateAppliesThenStatusClean(t *testing.T) {
 	if applied.Applied < 1 {
 		t.Errorf("applied = %d, want >= 1", applied.Applied)
 	}
-	if applied.SchemaVersion < 1 {
-		t.Errorf("schema_version = %d, want >= 1 after applying", applied.SchemaVersion)
+	if applied.StoreSchemaVersion < 1 {
+		t.Errorf("schema_version = %d, want >= 1 after applying", applied.StoreSchemaVersion)
 	}
 
 	res = runRoot(t, "1.2.3", "feedwatch", "--db", db, "migrate", "--status")
@@ -124,8 +124,8 @@ func TestMigrateAppliesThenStatusClean(t *testing.T) {
 	if st.Pending != 0 {
 		t.Errorf("pending = %d, want 0 after applying", st.Pending)
 	}
-	if st.SchemaVersion != applied.SchemaVersion {
-		t.Errorf("status schema_version = %d, want %d", st.SchemaVersion, applied.SchemaVersion)
+	if st.StoreSchemaVersion != applied.StoreSchemaVersion {
+		t.Errorf("status schema_version = %d, want %d", st.StoreSchemaVersion, applied.StoreSchemaVersion)
 	}
 }
 

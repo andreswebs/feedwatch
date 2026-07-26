@@ -201,3 +201,37 @@ func TestScalar(t *testing.T) {
 		t.Errorf("scalar emitted object keys: %s", jsonschema.Scalar("string", "desc"))
 	}
 }
+
+type EmbeddedHead struct {
+	SchemaVersion int  `json:"schema_version"`
+	OK            bool `json:"ok"`
+}
+
+type envelopeWithHead struct {
+	EmbeddedHead
+	Count int      `json:"count"`
+	Names []string `json:"names"`
+}
+
+// TestReflectInlinesAnonymousEmbeddedStruct pins the head-inlining rule: an
+// anonymous embedded struct with no json tag merges its properties and required
+// entries into the parent object, so schema_version and ok land at the top level
+// and no "EmbeddedHead" property appears.
+func TestReflectInlinesAnonymousEmbeddedStruct(t *testing.T) {
+	p := decode(t, jsonschema.Reflect(envelopeWithHead{}))
+
+	if p.Type != "object" {
+		t.Fatalf("type = %q, want object", p.Type)
+	}
+	if got, want := keys(p.Properties), []string{"count", "names", "ok", "schema_version"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("properties = %v, want %v", got, want)
+	}
+	if _, ok := p.Properties["EmbeddedHead"]; ok {
+		t.Errorf("embedded struct leaked as a nested property: %v", keys(p.Properties))
+	}
+	req := append([]string(nil), p.Required...)
+	sort.Strings(req)
+	if want := []string{"count", "names", "ok", "schema_version"}; !reflect.DeepEqual(req, want) {
+		t.Errorf("required = %v, want %v", req, want)
+	}
+}

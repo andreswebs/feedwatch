@@ -496,7 +496,6 @@ After writing any Markdown, run
 (the repo also has a local `.markdownlint.yaml`; prefer it if present at the
 repo root). No em-dashes, no emojis, no machine-local paths in committed docs.
 
-
 ## Notes
 
 **2026-07-24T21:00:45Z**

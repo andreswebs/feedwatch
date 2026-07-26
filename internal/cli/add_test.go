@@ -112,8 +112,8 @@ func TestAddHTMLPageIsRejectedPointingToDiscover(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 		t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
 	}
-	if env.Error.Category != string(core.CatUsage) {
-		t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+	if env.Error.Code != core.ErrUsage.Code() {
+		t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 	}
 	if !strings.Contains(env.Error.Message, "discover") {
 		t.Errorf("message = %q, want it to point to discover", env.Error.Message)
@@ -147,8 +147,8 @@ func TestAddNonHTTPSchemeIsUsageError(t *testing.T) {
 			if err := json.Unmarshal([]byte(res.err), &env); err != nil {
 				t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
 			}
-			if env.Error.Category != string(core.CatUsage) {
-				t.Errorf("category = %q, want %q", env.Error.Category, core.CatUsage)
+			if env.Error.Code != core.ErrUsage.Code() {
+				t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
 			}
 			if len(fetcher.Requests(tc.arg)) != 0 {
 				t.Errorf("a bad URL should be rejected before any fetch")

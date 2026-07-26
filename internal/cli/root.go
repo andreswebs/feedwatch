@@ -15,6 +15,7 @@ import (
 	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/internal/terr"
 )
 
 // Deps are the dependencies wired into the command tree by main. The cli
@@ -149,7 +150,7 @@ func (d Deps) commandNotFound() cliv3.CommandNotFoundFunc {
 		err := unknownCommandErr(name)
 		r := d.errRenderer(cmd)
 		_ = r.Error(err)
-		cliv3.OsExiter(core.ExitCodeFor(err))
+		cliv3.OsExiter(output.ExitCodeFor(err))
 	}
 }
 
@@ -167,7 +168,7 @@ func (d Deps) completionShellNotFound() cliv3.CommandNotFoundFunc {
 		}
 		r := d.errRenderer(cmd)
 		_ = r.Error(err)
-		cliv3.OsExiter(core.ExitCodeFor(err))
+		cliv3.OsExiter(output.ExitCodeFor(err))
 	}
 }
 
@@ -182,24 +183,26 @@ func unknownCommandErr(name string) *core.FeedError {
 }
 
 // exitErrHandler is the single boundary that turns a returned error into a
-// process exit code and the lone stderr error emission. A value implementing
-// cli.ExitCoder (an exitError carrying a feed-outcome code) is a normal,
-// already-reported outcome: it sets the code and writes nothing more. Any other
-// error is a hard, whole-invocation failure rendered once as a JSON error
-// object, with the code derived from core.ExitCodeFor.
+// process exit code and the lone stderr error emission. An exitError (carrying a
+// feed-outcome code) is a normal, already-reported outcome: it sets the code and
+// writes nothing more. It is matched concretely rather than through cli.ExitCoder
+// because a coded *core.FeedError also carries ExitCode() and would otherwise be
+// swallowed as an already-reported outcome instead of rendered. Any other error
+// is a hard, whole-invocation failure rendered once as a JSON error object, with
+// the code derived from output.ExitCodeFor.
 func (d Deps) exitErrHandler() cliv3.ExitErrHandlerFunc {
 	return func(_ context.Context, cmd *cliv3.Command, err error) {
 		if err == nil {
 			return
 		}
-		var coder cliv3.ExitCoder
-		if errors.As(err, &coder) {
-			cliv3.OsExiter(coder.ExitCode())
+		var ee exitError
+		if errors.As(err, &ee) {
+			cliv3.OsExiter(ee.ExitCode())
 			return
 		}
 		r := d.errRenderer(cmd)
-		_ = r.Error(feedErrorFor(err))
-		cliv3.OsExiter(core.ExitCodeFor(err))
+		_ = r.Error(boundaryError(err))
+		cliv3.OsExiter(output.ExitCodeFor(err))
 	}
 }
 
@@ -210,27 +213,19 @@ func (d Deps) errRenderer(cmd *cliv3.Command) *output.Renderer {
 	return output.NewRenderer(cmd.String("format"), d.Out, d.Err, output.ColorPolicy{NoColorFlag: cmd.Bool("no-color")})
 }
 
-// feedErrorFor coerces any error into a *core.FeedError for stderr rendering. A
-// FeedError in the chain is used directly; otherwise a sentinel is mapped to
-// its category, falling back to internal.
-func feedErrorFor(err error) *core.FeedError {
-	var fe *core.FeedError
-	if errors.As(err, &fe) {
-		return fe
+// boundaryError normalizes an error for stderr rendering by EmitError, which
+// classifies any terr.Coded error directly. A residual cancellation or deadline
+// is a graceful interrupt, not an internal failure (main owns the 128+signal
+// exit code), so an uncoded one is wrapped as a timeout-category error to keep
+// it from surfacing as internal_error on stderr. Every other error is passed
+// through unchanged for EmitError to classify.
+func boundaryError(err error) error {
+	var coded terr.Coded
+	if errors.As(err, &coded) {
+		return err
 	}
-	cat := core.CatInternal
-	switch {
-	case errors.Is(err, core.ErrUsage):
-		cat = core.CatUsage
-	case errors.Is(err, core.ErrConfig):
-		cat = core.CatConfig
-	case errors.Is(err, core.ErrStoreUnavailable), errors.Is(err, core.ErrSchemaTooNew):
-		cat = core.CatStore
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		// A residual cancellation or deadline is a graceful interrupt, not an
-		// internal failure; main owns the 128+signal exit code. Classify it as
-		// timeout so it never surfaces as an internal error on stderr.
-		cat = core.CatTimeout
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return &core.FeedError{Category: core.CatTimeout, Message: err.Error(), Err: err}
 	}
-	return &core.FeedError{Category: cat, Message: err.Error()}
+	return err
 }

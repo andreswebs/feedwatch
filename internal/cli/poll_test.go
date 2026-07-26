@@ -198,8 +198,9 @@ func pollEnvelopeHasField(t *testing.T, out, field, wantRaw string) bool {
 }
 
 // TestPollAllFailedExits2 covers behavior 2: when every targeted feed fails, the
-// per-feed errors go to stderr, the envelope is still written to stdout with no
-// items, and the run exits 2.
+// per-feed failures are result data on stdout (the failures array), the envelope
+// is still written to stdout with no items, the stderr batch error object is
+// gone, and the run exits 2.
 func TestPollAllFailedExits2(t *testing.T) {
 	st, fetcher, parser, clk := newPollDoubles(t)
 
@@ -233,20 +234,14 @@ func TestPollAllFailedExits2(t *testing.T) {
 		t.Errorf("items length = %d, want 0 for an all-failed poll", len(env.Items))
 	}
 
-	var errEnv struct {
-		Errors []map[string]any `json:"errors"`
-	}
-	if err := json.Unmarshal([]byte(res.err), &errEnv); err != nil {
-		t.Fatalf("stderr is not a JSON errors object: %v\ngot: %q", err, res.err)
-	}
-	if len(errEnv.Errors) != 2 {
-		t.Errorf("stderr errors length = %d, want 2", len(errEnv.Errors))
+	if strings.Contains(res.err, `"errors":[`) {
+		t.Errorf("stderr still carries the removed batch errors object: %q", res.err)
 	}
 }
 
 // TestPollMixedExits3 covers behaviors 3 and 4: a poll with one success and one
-// failure exits 3, the stdout envelope carries only the success, and the failure
-// appears on stderr and never on stdout.
+// failure exits 3, the stdout envelope carries the success item plus the failure
+// in its failures array, and the removed stderr batch object is gone.
 func TestPollMixedExits3(t *testing.T) {
 	st, fetcher, parser, clk := newPollDoubles(t)
 
@@ -291,17 +286,8 @@ func TestPollMixedExits3(t *testing.T) {
 		t.Errorf("failure status = %v, want 500", f["status"])
 	}
 
-	var errEnv struct {
-		Errors []map[string]any `json:"errors"`
-	}
-	if err := json.Unmarshal([]byte(res.err), &errEnv); err != nil {
-		t.Fatalf("stderr is not a JSON errors object: %v\ngot: %q", err, res.err)
-	}
-	if len(errEnv.Errors) != 1 {
-		t.Fatalf("stderr errors length = %d, want 1", len(errEnv.Errors))
-	}
-	if errEnv.Errors[0]["feed_url"] != bad {
-		t.Errorf("stderr error feed_url = %v, want %q", errEnv.Errors[0]["feed_url"], bad)
+	if strings.Contains(res.err, `"errors":[`) {
+		t.Errorf("stderr still carries the removed batch errors object: %q", res.err)
 	}
 }
 

@@ -6,11 +6,13 @@ import (
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // DisableResult is the disable stdout envelope: the feed's state after it has
 // been manually disabled so poll skips it.
 type DisableResult struct {
+	output.Head
 	Feed FeedView `json:"feed"`
 }
 
@@ -58,7 +60,7 @@ func (d Deps) disableAction(ctx context.Context, cmd *cliv3.Command) error {
 	if err != nil {
 		return err
 	}
-	return r.Result(DisableResult{Feed: FeedView{
+	return r.Result(DisableResult{Head: output.OKHead(), Feed: FeedView{
 		URL:       updated.URL,
 		Alias:     updated.Alias,
 		Status:    string(updated.Status),

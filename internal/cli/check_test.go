@@ -18,7 +18,7 @@ import (
 // checkEnvelope mirrors the stdout CheckResult shape for assertions.
 type checkEnvelope struct {
 	Checked  int              `json:"checked"`
-	OK       int              `json:"ok"`
+	Passed   int              `json:"passed"`
 	Failed   int              `json:"failed"`
 	Failures []map[string]any `json:"failures"`
 }
@@ -96,8 +96,8 @@ func TestCheckAllSuccessExits0(t *testing.T) {
 	if env.Checked != 2 {
 		t.Errorf("checked = %d, want 2", env.Checked)
 	}
-	if env.OK != 2 {
-		t.Errorf("ok = %d, want 2", env.OK)
+	if env.Passed != 2 {
+		t.Errorf("passed = %d, want 2", env.Passed)
 	}
 	if env.Failed != 0 {
 		t.Errorf("failed = %d, want 0", env.Failed)
@@ -142,8 +142,8 @@ func TestCheckAllFailedExits2(t *testing.T) {
 	if env.Checked != 2 {
 		t.Errorf("checked = %d, want 2", env.Checked)
 	}
-	if env.OK != 0 {
-		t.Errorf("ok = %d, want 0", env.OK)
+	if env.Passed != 0 {
+		t.Errorf("passed = %d, want 0", env.Passed)
 	}
 	if env.Failed != 2 {
 		t.Errorf("failed = %d, want 2", env.Failed)
@@ -176,8 +176,8 @@ func TestCheckMixedExits3(t *testing.T) {
 	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
 		t.Fatalf("stdout is not a check envelope: %v\ngot: %q", err, res.out)
 	}
-	if env.Checked != 2 || env.OK != 1 || env.Failed != 1 {
-		t.Errorf("checked=%d ok=%d failed=%d, want 2 1 1", env.Checked, env.OK, env.Failed)
+	if env.Checked != 2 || env.Passed != 1 || env.Failed != 1 {
+		t.Errorf("checked=%d passed=%d failed=%d, want 2 1 1", env.Checked, env.Passed, env.Failed)
 	}
 	if len(env.Failures) != 1 {
 		t.Fatalf("failures length = %d, want 1", len(env.Failures))

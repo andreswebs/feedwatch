@@ -63,6 +63,25 @@ func TestRendererTextResultLabelsNoColor(t *testing.T) {
 	}
 }
 
+// The generic text fallback omits the embedded envelope head, so schema_version
+// and ok never leak into human output for a headed envelope.
+func TestRendererTextOmitsEmbeddedHead(t *testing.T) {
+	type result struct {
+		output.Head
+		Polled int `json:"polled"`
+	}
+
+	var out bytes.Buffer
+	r := &output.Renderer{Format: "text", OutColor: false, Out: &out}
+	if err := r.Result(result{Head: output.OKHead(), Polled: 3}); err != nil {
+		t.Fatalf("Result: %v", err)
+	}
+
+	if got, want := out.String(), "polled: 3\n"; got != want {
+		t.Errorf("text result = %q, want %q (head must not appear)", got, want)
+	}
+}
+
 // Text error rendering pairs a symbol with color: the symbol survives when
 // color is stripped, and ANSI appears only when color is on.
 func TestRendererTextErrorSymbolAndColor(t *testing.T) {
@@ -94,22 +113,6 @@ func TestRendererTextErrorSymbolAndColor(t *testing.T) {
 	}
 	if !strings.Contains(ps, "✗") {
 		t.Errorf("plain error lost the fail symbol when color stripped: %q", ps)
-	}
-}
-
-// Errors renders each failure; in text mode every line keeps its symbol.
-func TestRendererTextErrorsEach(t *testing.T) {
-	var errb bytes.Buffer
-	r := &output.Renderer{Format: "text", ErrColor: false, Err: &errb}
-	es := []*core.FeedError{
-		core.HTTPErr("https://a.example/feed", 404, errors.New("not found")),
-		core.NetworkErr("https://b.example/feed", errors.New("connection reset")),
-	}
-	if err := r.Errors(es); err != nil {
-		t.Fatalf("Errors: %v", err)
-	}
-	if n := strings.Count(errb.String(), "✗"); n != 2 {
-		t.Errorf("got %d fail symbols, want 2: %q", n, errb.String())
 	}
 }
 

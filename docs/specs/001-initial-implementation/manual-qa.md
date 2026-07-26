@@ -406,14 +406,14 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-MIGRATE-001: Fresh machine auto-applies schema (P0)
 
 - **Steps:** with a brand-new `--db` path, run `feedwatch migrate`.
-- **Expected:** `{"applied":N,"schema_version":V}` with `N >= 1`; exit 0; no
-  manual setup required.
+- **Expected:** `{"schema_version":1,"ok":true,"applied":N,"store_schema_version":V}`
+  with `N >= 1`; exit 0; no manual setup required.
 
 #### TC-MIGRATE-002: `migrate --status` reports version, pending, backend (P0)
 
 - **Steps:** on a fresh DB run `feedwatch migrate --status`.
-- **Expected:** `{"schema_version":V,"pending":0,"backend":"sqlite"}`; the status
-  path ensures schema first, so pending is 0; exit 0.
+- **Expected:** `{"schema_version":1,"ok":true,"store_schema_version":V,"pending":0,"backend":"sqlite"}`;
+  the status path ensures schema first, so pending is 0; exit 0.
 
 #### TC-MIGRATE-003: Refuse a newer-than-known schema (P1)
 
@@ -456,7 +456,7 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-SUB-001: `add` validates the URL parses as a feed (P0)
 
 - **Steps:** `feedwatch add <fixture-rss-feed-url> --alias f1 --interval 30m`.
-- **Expected:** `{"url":...,"alias":"f1","interval":"30m0s","created":true}`;
+- **Expected:** `{"schema_version":1,"ok":true,"url":...,"alias":"f1","interval":"30m0s","created":true}`;
   exit 0.
 
 #### TC-SUB-002: `add` rejects a non-feed and points to discover (P0)
@@ -485,8 +485,8 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-SUB-006: `rm` by URL and by alias (P0)
 
 - **Steps:** add a feed; `feedwatch rm <alias>`; re-add; `feedwatch rm <url>`.
-- **Expected:** `{"removed":<url>}`; subscription gone from `list`; its stored
-  items removed.
+- **Expected:** `{"schema_version":1,"ok":true,"removed":<url>}`; subscription
+  gone from `list`; its stored items removed.
 
 #### TC-SUB-007: `list` reports health fields (P0)
 
@@ -873,8 +873,8 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-OPML-001: `import` adds feeds at any nesting depth (P1)
 
 - **Steps:** `feedwatch import subs.opml` where the outline has nested folders.
-- **Expected:** every feed at any depth added; `{"added":N,"skipped":M,
-  "failed":[...]}`.
+- **Expected:** every feed at any depth added; `{"schema_version":1,"ok":true,
+  "added":N,"skipped":M,"failed":[...]}`.
 
 #### TC-OPML-002: xmlUrl with url fallback; text/title alias (P2)
 
@@ -918,7 +918,7 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
   2. `feedwatch import --no-validate subs.opml` -- all three are subscribed without
      fetching.
   3. `feedwatch check`.
-- **Expected:** exit 3; `checked=3 ok=2 failed=1`; the dead feed appears in
+- **Expected:** exit 3; `checked=3 passed=2 failed=1`; the dead feed appears in
   `failures` with an appropriate `category` (`network` or `http`); no items
   stored; no change to ETag or schedule timestamps on surviving feeds.
 
@@ -934,7 +934,7 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-CHECK-003: All feeds pass -- exit 0, failures is empty list (P1)
 
 - **Steps:** subscribe to a reachable feed; `feedwatch check`.
-- **Expected:** exit 0; `{"checked":1,"ok":1,"failed":0,"failures":[]}`.
+- **Expected:** exit 0; `{"schema_version":1,"ok":true,"checked":1,"passed":1,"failed":0,"failures":[]}`.
   `failures` serializes as `[]`, never `null`.
 
 #### TC-CHECK-004: Disabled feeds skipped when unnamed (P2)

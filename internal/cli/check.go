@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	cliv3 "github.com/urfave/cli/v3"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // CheckFailure is one failed feed in the check envelope: the feed URL, its
@@ -21,13 +23,25 @@ type CheckFailure struct {
 }
 
 // CheckResult is the check stdout envelope: how many feeds were checked, how
-// many passed, how many failed, and one entry per failed feed. failures is
-// always present, empty ([]) when nothing failed.
+// many passed, how many failed, and one entry per failed feed. The passing
+// count is named passed rather than ok to avoid colliding with the head's ok
+// boolean. failures is always present, empty ([]) when nothing failed.
 type CheckResult struct {
+	output.Head
 	Checked  int            `json:"checked"`
-	OK       int            `json:"ok"`
+	Passed   int            `json:"passed"`
 	Failed   int            `json:"failed"`
 	Failures []CheckFailure `json:"failures"`
+}
+
+// MarshalJSON coalesces failures so it always serializes as [] rather than null.
+func (r CheckResult) MarshalJSON() ([]byte, error) {
+	type alias CheckResult
+	a := alias(r)
+	if a.Failures == nil {
+		a.Failures = []CheckFailure{}
+	}
+	return json.Marshal(a)
 }
 
 // ExitCode derives the process exit code from the outcome: 0 when nothing was
@@ -111,12 +125,11 @@ func (d Deps) checkAction(ctx context.Context, cmd *cliv3.Command) error {
 	}
 	_ = g.Wait()
 
-	// Build the envelope; failures always present as a list.
+	// Build the envelope; the marshaler guarantees failures serializes as [].
 	result := CheckResult{
-		Checked:  len(feeds),
-		Failures: make([]CheckFailure, 0),
+		Head:    output.OKHead(),
+		Checked: len(feeds),
 	}
-	var collectedErrs []*core.FeedError
 	for _, fe := range feedErrs {
 		if fe != nil {
 			result.Failed++
@@ -126,19 +139,12 @@ func (d Deps) checkAction(ctx context.Context, cmd *cliv3.Command) error {
 				Status:   fe.Status,
 				Message:  fe.Detail(),
 			})
-			collectedErrs = append(collectedErrs, fe)
 		}
 	}
-	result.OK = result.Checked - result.Failed
+	result.Passed = result.Checked - result.Failed
 
 	if err := r.Result(result); err != nil {
 		return err
-	}
-
-	if len(collectedErrs) > 0 {
-		if err := r.Errors(collectedErrs); err != nil {
-			return err
-		}
 	}
 
 	if code := result.ExitCode(); code != 0 {

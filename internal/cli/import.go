@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/andreswebs/feedwatch/internal/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/opml"
+	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/store"
 )
@@ -19,9 +21,20 @@ import (
 // how many were skipped as already-subscribed duplicates, and the per-entry
 // failures that did not abort the import.
 type ImportResult struct {
+	output.Head
 	Added   int          `json:"added"`
 	Skipped int          `json:"skipped"`
 	Failed  []ImportFail `json:"failed"`
+}
+
+// MarshalJSON coalesces failed so it always serializes as [] rather than null.
+func (r ImportResult) MarshalJSON() ([]byte, error) {
+	type alias ImportResult
+	a := alias(r)
+	if a.Failed == nil {
+		a.Failed = []ImportFail{}
+	}
+	return json.Marshal(a)
 }
 
 // ImportFail records one OPML entry that could not be imported, identified by
@@ -146,7 +159,7 @@ func importFeeds(ctx context.Context, st store.Store, feeds []opml.Feed, invalid
 		}
 	}
 
-	res := ImportResult{Failed: make([]ImportFail, 0, len(invalid))}
+	res := ImportResult{Head: output.OKHead(), Failed: make([]ImportFail, 0, len(invalid))}
 	for _, iv := range invalid {
 		res.Failed = append(res.Failed, ImportFail{Reason: iv.Reason})
 	}

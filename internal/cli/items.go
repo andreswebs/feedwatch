@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // ItemsResult is the items stdout envelope for a full (unprojected) query: the
@@ -19,8 +21,19 @@ import (
 // counts items a publication-axis date window excluded for a null publication
 // time.
 type ItemsResult struct {
+	output.Head
 	Items         []core.Item `json:"items"`
 	OmittedNoDate int         `json:"omitted_no_date,omitempty"`
+}
+
+// MarshalJSON coalesces items so it always serializes as [] rather than null.
+func (r ItemsResult) MarshalJSON() ([]byte, error) {
+	type alias ItemsResult
+	a := alias(r)
+	if a.Items == nil {
+		a.Items = []core.Item{}
+	}
+	return json.Marshal(a)
 }
 
 // ProjectedItemsResult is the items stdout envelope when --fields narrows the
@@ -29,9 +42,20 @@ type ItemsResult struct {
 // OmittedNoDate carries the same publication-axis exclusion count, regardless of
 // projection.
 type ProjectedItemsResult struct {
+	output.Head
 	Items         []map[string]any `json:"items" jsonschema:"opaque"`
 	OmittedNoDate int              `json:"omitted_no_date,omitempty"`
 	fields        []string
+}
+
+// MarshalJSON coalesces items so it always serializes as [] rather than null.
+func (r ProjectedItemsResult) MarshalJSON() ([]byte, error) {
+	type alias ProjectedItemsResult
+	a := alias(r)
+	if a.Items == nil {
+		a.Items = []map[string]any{}
+	}
+	return json.Marshal(a)
 }
 
 // itemsCommand registers the items subcommand: query stored item history with
@@ -92,13 +116,10 @@ func (d Deps) itemsAction(ctx context.Context, cmd *cliv3.Command) error {
 			projected[i] = core.ProjectItem(it, q.Fields)
 		}
 		return r.Result(ProjectedItemsResult{
-			Items: projected, OmittedNoDate: qr.OmittedNoDate, fields: q.Fields,
+			Head: output.OKHead(), Items: projected, OmittedNoDate: qr.OmittedNoDate, fields: q.Fields,
 		})
 	}
-	if items == nil {
-		items = []core.Item{}
-	}
-	return r.Result(ItemsResult{Items: items, OmittedNoDate: qr.OmittedNoDate})
+	return r.Result(ItemsResult{Head: output.OKHead(), Items: items, OmittedNoDate: qr.OmittedNoDate})
 }
 
 // buildItemQuery assembles a core.ItemQuery from the command flags, resolving

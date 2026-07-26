@@ -6,8 +6,6 @@ import (
 	"os"
 	"reflect"
 	"strings"
-
-	"github.com/andreswebs/feedwatch/internal/core"
 )
 
 // Text-mode status markers. Each pairs a symbol with color so that stripping
@@ -31,10 +29,9 @@ type TextRenderer interface {
 	RenderText(w io.Writer, color bool) error
 }
 
-// Renderer writes a command's result to stdout and its per-feed failures to
-// stderr in the selected format. The never-colorize-JSON rule and per-stream
-// color gating are enforced here, so callers only choose Result, Error, or
-// Errors.
+// Renderer writes a command's result to stdout and a whole-invocation failure
+// to stderr in the selected format. The never-colorize-JSON rule and per-stream
+// color gating are enforced here, so callers only choose Result or Error.
 type Renderer struct {
 	Format             string
 	OutColor, ErrColor bool
@@ -66,39 +63,26 @@ func (r *Renderer) Result(v any) error {
 	return renderText(r.Out, v)
 }
 
-// Error writes a single per-feed failure to stderr as a structured JSON object,
-// or as a symbol-marked text line when the format is text.
-func (r *Renderer) Error(e *core.FeedError) error {
+// Error writes a whole-invocation failure to stderr as the ADR 0005 error
+// envelope in JSON, or as a symbol-marked text line when the format is text.
+func (r *Renderer) Error(err error) error {
 	if r.Format != "text" {
-		return WriteError(r.Err, e)
+		EmitError(r.Err, err)
+		return nil
 	}
-	return r.textError(e)
-}
-
-// Errors writes a batch of per-feed failures to stderr, one structured object
-// under "errors" in JSON, or one symbol-marked line each in text.
-func (r *Renderer) Errors(es []*core.FeedError) error {
-	if r.Format != "text" {
-		return WriteErrors(r.Err, es)
-	}
-	for _, e := range es {
-		if err := r.textError(e); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r.textError(err)
 }
 
 // textError writes one failure line. The fail symbol is always present; red is
 // added only when the stream is colorized, so color is never the sole carrier
 // of the failure signal.
-func (r *Renderer) textError(e *core.FeedError) error {
-	line := SymbolFail + " " + e.Error()
+func (r *Renderer) textError(err error) error {
+	line := SymbolFail + " " + err.Error()
 	if r.ErrColor {
 		line = ansiRed + line + ansiReset
 	}
-	_, err := fmt.Fprintln(r.Err, line)
-	return err
+	_, ferr := fmt.Fprintln(r.Err, line)
+	return ferr
 }
 
 // renderText is the generic text fallback for result values that do not
@@ -124,6 +108,12 @@ func renderText(w io.Writer, v any) error {
 	for i := range rt.NumField() {
 		f := rt.Field(i)
 		if !f.IsExported() {
+			continue
+		}
+		// Skip an anonymous embedded struct (such as the envelope head): its
+		// fields belong to the JSON contract, not the human text dump, so text
+		// output stays identical to the pre-head shape.
+		if f.Anonymous {
 			continue
 		}
 		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")

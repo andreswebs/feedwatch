@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/internal/output"
 )
 
 // TestExitCodeTablesCoverExitCodeFor is the ADR 0001 conformance guard: every
-// whole-invocation failure code that core.ExitCodeFor can return must be
+// whole-invocation failure code that output.ExitCodeFor can return must be
 // declared as data in each command's exit-code table. Prose alone is not
 // acceptable (ADR 0001), so this test pins the two halves together and fails if
 // ExitCodeFor grows a class the registry does not describe.
@@ -31,7 +32,7 @@ func TestExitCodeTablesCoverExitCodeFor(t *testing.T) {
 	// Collect the distinct non-zero codes ExitCodeFor actually produces.
 	produced := map[string]bool{}
 	for _, err := range failureErrs {
-		code := core.ExitCodeFor(err)
+		code := output.ExitCodeFor(err)
 		if code == 0 {
 			t.Errorf("ExitCodeFor(%v) = 0, want a whole-invocation failure code", err)
 			continue
