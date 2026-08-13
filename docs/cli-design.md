@@ -191,9 +191,12 @@ their consumers depend on.
 
 ```text
 cmd/feedwatch/             main: signal.Notify wiring, one os.Exit(command.Run)
-internal/core/             domain types: Feed, Item, Enclosure, Category,
-                           FeedError, sentinel errors (no internal deps)
-internal/store/            Store interface over core types
+./                         public library: App and its options, Config, the
+                           Fetcher/Parser/Warner ports, the envelope head
+core/                      public domain types: Feed, Item, Enclosure, Category,
+                           ParsedFeed, Candidate, FeedError, sentinel errors
+store/                     public Store interface over core types: the
+                           backend extension point
 internal/store/sqlite/     SQLite implementation + embedded migrations
 internal/store/postgres/   PostgreSQL implementation (deferred)
 internal/fetch/            HTTP: conditional GET, SSRF guard, retry, charset;
@@ -202,10 +205,10 @@ internal/parse/            Parser interface + gofeed impl + normalization
 internal/poll/             orchestration: fetch, parse, dedup, persist
 internal/discover/         autodiscovery and common-path probing
 internal/opml/             OPML import and export
-internal/output/           result envelope types, JSON/text renderers, color
+internal/output/           JSON/text renderers, error and warning envelopes,
+                           color gating
 internal/command/          Run boundary (contract) + urfave interior: command
                            tree, flags, Before hook, schema
-internal/config/           resolved configuration
 ```
 
 `Store`, `Parser`, and `Fetcher` are narrow interfaces defined for their

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )

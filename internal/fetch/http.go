@@ -14,7 +14,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 const (

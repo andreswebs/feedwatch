@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -113,7 +112,7 @@ func TestRunUninterruptedPersistsWithoutDeadline(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}}})
+	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}}})
 
 	d := Deps{
 		Store:            s,

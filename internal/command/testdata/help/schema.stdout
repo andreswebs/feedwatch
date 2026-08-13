@@ -1,0 +1,24 @@
+NAME:
+   feedwatch schema - emit the machine-readable interface contract
+
+USAGE:
+   feedwatch schema [options] [COMMAND]
+
+OPTIONS:
+   --help, -h  show help
+
+GLOBAL OPTIONS:
+   --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]
+   --format FORMAT             output FORMAT: json or text (default: "json") [$FEEDWATCH_FORMAT]
+   --log-level LEVEL           log LEVEL: error, warn, info, or debug (default: "info")
+   --quiet                     raise the log floor to errors only
+   --no-color                  disable color in text output
+   --user-agent string         HTTP User-Agent header (default: "feedwatch") [$FEEDWATCH_USER_AGENT]
+   --concurrency int           worker pool size for concurrent polling (default: 8) [$FEEDWATCH_CONCURRENCY]
+   --connect-timeout duration  dial deadline per feed (default: 5s)
+   --timeout duration          overall deadline per feed (default: 30s)
+   --proxy URL                 outbound HTTP proxy URL
+   --ca-bundle FILE            path to a custom CA bundle FILE
+   --min-tls VERSION           minimum TLS VERSION: 1.2 or 1.3 (default: "1.2")
+   --allow-private             allow redirects into private address space
+   --version, -v               print version information

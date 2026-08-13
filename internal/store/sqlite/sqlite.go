@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // timeLayout is the fixed-width RFC3339 UTC layout every timestamp is stored

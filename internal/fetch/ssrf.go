@@ -6,7 +6,7 @@ import (
 	"net"
 	"net/http"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // maxRedirects bounds a single fetch's redirect chain. Installing a custom

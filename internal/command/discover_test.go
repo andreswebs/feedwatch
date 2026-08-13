@@ -7,29 +7,23 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/fetch"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 const discoverRSS = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Probed Feed</title>
 <item><title>i</title><guid>g1</guid></item></channel></rss>`
 
-// runDiscover drives the discover command through the root with the real fetcher
-// and parser (pointed at an httptest server via the injected interfaces) and an
-// injected store, capturing stdout, stderr, and the exit code.
+// runDiscover drives the discover command through the root with an injected
+// store and the production fetcher and parser the App builds from the config,
+// pointed at an httptest server by the URL under test. It captures stdout,
+// stderr, and the exit code.
 func runDiscover(t *testing.T, st store.Store, args ...string) runResult {
 	t.Helper()
 
-	f, err := fetch.New()
-	if err != nil {
-		t.Fatalf("fetch.New: %v", err)
-	}
-
-	d := Deps{Version: "1.2.3", store: st, fetch: f, parse: parse.New()}
+	d := Deps{Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"discover"}, args...)...)
 }
 

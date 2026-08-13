@@ -2,14 +2,14 @@ package command
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strconv"
 	"testing"
 
-	cliv3 "github.com/urfave/cli/v3"
-
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/terr"
+	cliv3 "github.com/urfave/cli/v3"
 )
 
 // decodeCommandSchema unmarshals stdout into a single Schema, failing the
@@ -415,7 +415,7 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 		assertContract(t, name, p, want.props, want.required)
 	}
 
-	// FeedView is reached by recursion through list/enable/disable.
+	// feedwatch.FeedView is reached by recursion through list/enable/disable.
 	list := parseSchema(t, registryFor("list").output)
 	feeds := parseSchema(t, list.Properties["feeds"])
 	feedItem := parseSchema(t, feeds.Items)
@@ -474,4 +474,75 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 	if sch.Type != "object" || sch.Description == "" {
 		t.Errorf("schema schema = %s, want a described object scalar", registryFor("schema").output)
 	}
+}
+
+// TestSchemaSurfaceEquivalence pins the whole machine-readable input surface,
+// bare and per command, against reviewed goldens. It is the guard for deriving
+// flags and arguments by reflection (ADR 0007): a derived flag must be
+// indistinguishable from the hand-declared one it replaced, so the same primary
+// name, aliases, type, default, and usage text must still appear.
+func TestSchemaSurfaceEquivalence(t *testing.T) {
+	res := runCLI(t, "1.2.3", "feedwatch", "schema")
+	if res.code != 0 {
+		t.Fatalf("schema exit = %d, want 0\nstderr: %s", res.code, res.err)
+	}
+	checkGolden(t, "schema/all.stdout", withoutErrorInventory([]byte(res.out)))
+
+	for _, name := range schemaCommandNames(t) {
+		res := runCLI(t, "1.2.3", "feedwatch", "schema", name)
+		if res.code != 0 {
+			t.Fatalf("schema %s exit = %d, want 0\nstderr: %s", name, res.code, res.err)
+		}
+		checkGolden(t, "schema/"+name+".stdout", []byte(res.out))
+	}
+}
+
+// schemaCommandNames reads the documented command names out of the bare schema
+// envelope, so the per-command pins cover whatever the tree actually registers
+// rather than a hand-maintained list.
+func schemaCommandNames(t *testing.T) []string {
+	t.Helper()
+	res := runCLI(t, "1.2.3", "feedwatch", "schema")
+	var sr SchemaResult
+	if err := json.Unmarshal([]byte(res.out), &sr); err != nil {
+		t.Fatalf("bare schema is not a SchemaResult: %v", err)
+	}
+	names := make([]string, 0, len(sr.Commands))
+	for _, c := range sr.Commands {
+		names = append(names, c.Command)
+	}
+	return names
+}
+
+// TestHelpSurfaceEquivalence pins the human help text, root and per command,
+// against reviewed goldens. The schema envelope carries flag names, types, and
+// defaults but not their usage strings, so help is where the usage half of the
+// input surface is observable: together the two goldens pin every tag the
+// reflection projector reads.
+func TestHelpSurfaceEquivalence(t *testing.T) {
+	res := runCLI(t, "1.2.3", "feedwatch", "--help")
+	if res.code != 0 {
+		t.Fatalf("--help exit = %d, want 0\nstderr: %s", res.code, res.err)
+	}
+	checkGolden(t, "help/root.stdout", []byte(res.out))
+
+	for _, name := range schemaCommandNames(t) {
+		res := runCLI(t, "1.2.3", "feedwatch", name, "--help")
+		if res.code != 0 {
+			t.Fatalf("%s --help exit = %d, want 0\nstderr: %s", name, res.code, res.err)
+		}
+		checkGolden(t, "help/"+name+".stdout", []byte(res.out))
+	}
+}
+
+// reErrorInventory matches the bare schema envelope's errors array.
+var reErrorInventory = regexp.MustCompile(`"errors":\[.*?\],"global_flags"`)
+
+// withoutErrorInventory replaces the errors inventory with a stable token. The
+// inventory is a live projection of the process-wide terr registry, which a
+// sibling test writes to and cannot unregister, so it is not stable across a
+// package run; it is pinned by TestSchemaErrorInventory instead. Everything this
+// golden exists to pin (the derived flags and arguments) is left intact.
+func withoutErrorInventory(out []byte) []byte {
+	return reErrorInventory.ReplaceAll(out, []byte(`"errors":"<inventory>","global_flags"`))
 }

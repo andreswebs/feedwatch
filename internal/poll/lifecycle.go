@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // RecordSuccess clears a feed's persisted failure state and schedules its next

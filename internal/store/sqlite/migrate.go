@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 //go:embed migrations/*.sql

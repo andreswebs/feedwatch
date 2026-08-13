@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
 )

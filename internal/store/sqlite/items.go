@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // UpsertItems inserts items for a feed in one transaction, returning only those

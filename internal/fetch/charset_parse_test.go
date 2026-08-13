@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/testsupport"

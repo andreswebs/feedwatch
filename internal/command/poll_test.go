@@ -7,10 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 func pollFixedTime() time.Time {
@@ -33,7 +32,7 @@ func seedDueFeed(t *testing.T, s store.Store, url string) {
 func runPoll(t *testing.T, st store.Store, f *testsupport.FakeFetcher, p *testsupport.FakeParser, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st, fetch: f, parse: p}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: netOpts(st, f, p)}
 	return drive(t, d, args...)
 }
 
@@ -72,8 +71,8 @@ func TestPollAllSuccessExits0(t *testing.T) {
 	seedDueFeed(t, st, urlB)
 	fetcher.Register(urlA, okResult())
 	fetcher.Register(urlB, okResult())
-	parser.Register(urlA, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "Item A", Link: "https://a.example/1"}}})
-	parser.Register(urlB, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Item B", Link: "https://b.example/1"}}})
+	parser.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "Item A", Link: "https://a.example/1"}}})
+	parser.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Item B", Link: "https://b.example/1"}}})
 
 	res := runPoll(t, st, fetcher, parser, clk, "poll")
 
@@ -127,7 +126,7 @@ func TestPollReportsPermanentRedirectRename(t *testing.T) {
 	seedDueFeed(t, st, oldURL)
 	fetcher.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: true,
 		Body: []byte("body"), MIMEType: "application/rss+xml"})
-	parser.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Item", Link: "https://aihero.dev/1"}}})
+	parser.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Item", Link: "https://aihero.dev/1"}}})
 
 	res := runPoll(t, st, fetcher, parser, clk, "poll")
 
@@ -224,7 +223,7 @@ func TestPollMixedExits3(t *testing.T) {
 	seedDueFeed(t, st, good)
 	seedDueFeed(t, st, bad)
 	fetcher.Register(good, okResult())
-	parser.Register(good, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://good.example/1"}}})
+	parser.Register(good, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://good.example/1"}}})
 	fetcher.RegisterError(bad, core.HTTPErr(bad, 500, context.DeadlineExceeded))
 
 	res := runPoll(t, st, fetcher, parser, clk, "poll")
@@ -388,8 +387,8 @@ func TestPollMidPersistFailureWritesPartialEnvelopeAndExits70(t *testing.T) {
 	seedDueFeed(t, st, badURL)
 	fetcher.Register(goodURL, okResult())
 	fetcher.Register(badURL, okResult())
-	parser.Register(goodURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://aaa-good.example/1"}}})
-	parser.Register(badURL, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Bad Item", Link: "https://zzz-bad.example/1"}}})
+	parser.Register(goodURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://aaa-good.example/1"}}})
+	parser.Register(badURL, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Bad Item", Link: "https://zzz-bad.example/1"}}})
 
 	failing := &testsupport.FailingUpsertStore{Store: st, FailURL: badURL}
 
@@ -442,7 +441,7 @@ func TestPollEnvelopeHasFetchedAndDedupedCounters(t *testing.T) {
 	url := "https://a.example/feed.xml"
 	seedDueFeed(t, st, url)
 	fetcher.Register(url, okResult())
-	parser.Register(url, parse.ParsedFeed{Items: []core.Item{
+	parser.Register(url, core.ParsedFeed{Items: []core.Item{
 		{GUID: "a1", Title: "Item 1", Link: "https://a.example/1"},
 		{GUID: "a2", Title: "Item 2", Link: "https://a.example/2"},
 	}})

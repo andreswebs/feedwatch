@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/store/sqlite"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 var testNow = time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)

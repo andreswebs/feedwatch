@@ -8,26 +8,10 @@ import (
 
 	"golang.org/x/net/html"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/parse"
 )
-
-// Source labels how a candidate feed was found.
-const (
-	SourceAutodiscovery = "autodiscovery"
-	SourceProbe         = "probe"
-)
-
-// Candidate is one feed found for a page, validated by parsing. Source tells the
-// agent whether the feed was declared by the page (autodiscovery) or guessed
-// from a common path (probe).
-type Candidate struct {
-	Title  string `json:"title,omitempty"`
-	URL    string `json:"url"`
-	Type   string `json:"type,omitempty"`
-	Source string `json:"source"`
-}
 
 // Deps are discover's collaborators: an HTTP fetcher and a feed parser. Discovery
 // is read-only and never touches a store.
@@ -55,8 +39,8 @@ var feedLinkTypes = map[string]bool{
 // paths against the page's origin. Every candidate is fetched and parse-validated,
 // so non-feeds (HTML pages, sitemaps) are dropped. The returned slice is never
 // nil and is ordered autodiscovery first, then probe. Discovery is read-only.
-func Discover(ctx context.Context, d Deps, pageURL string) ([]Candidate, error) {
-	candidates := make([]Candidate, 0)
+func Discover(ctx context.Context, d Deps, pageURL string) ([]core.Candidate, error) {
+	candidates := make([]core.Candidate, 0)
 	seen := make(map[string]bool)
 
 	page, pageErr := d.Fetcher.Fetch(ctx, core.FetchRequest{URL: pageURL})
@@ -67,11 +51,11 @@ func Discover(ctx context.Context, d Deps, pageURL string) ([]Candidate, error) 
 			}
 			seen[link.url] = true
 			if title, _, ok := d.validate(ctx, link.url); ok {
-				candidates = append(candidates, Candidate{
+				candidates = append(candidates, core.Candidate{
 					Title:  firstNonEmpty(link.title, title),
 					URL:    link.url,
 					Type:   link.typ,
-					Source: SourceAutodiscovery,
+					Source: core.SourceAutodiscovery,
 				})
 			}
 		}
@@ -84,11 +68,11 @@ func Discover(ctx context.Context, d Deps, pageURL string) ([]Candidate, error) 
 		}
 		seen[probeURL] = true
 		if title, mimeType, ok := d.validate(ctx, probeURL); ok {
-			candidates = append(candidates, Candidate{
+			candidates = append(candidates, core.Candidate{
 				Title:  title,
 				URL:    probeURL,
 				Type:   mimeType,
-				Source: SourceProbe,
+				Source: core.SourceProbe,
 			})
 		}
 	}

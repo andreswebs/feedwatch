@@ -1,6 +1,6 @@
 ---
 id: fee-f3u8
-status: open
+status: closed
 deps: [fee-lq28]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -276,3 +276,19 @@ internal/command/context.go   (Config type)
 internal/command/*.go         (result structs embed feedwatch.Head)
 internal/output/output.go     (Head/OKHead/SchemaVersion removed; imports root for SchemaVersion)
 ```
+
+## Notes
+
+**2026-08-13T14:41:56Z**
+
+Root package feedwatch created: doc.go, config.go, ports.go, envelope.go, app.go, options.go, with black-box tests (app_test.go, config_test.go, envelope_test.go, imports_test.go) and app_internal_test.go for the unexported resolvers.
+
+Deviations and decisions worth knowing:
+- Store-path resolution landed as Config.StorePath() (public method) rather than an unexported helper, because both App.openStore and the CLI's surviving openStore need the same resolution plus first-run directory creation. DefaultStorePath() stays pure (no I/O); StorePath() is the one that creates the default parent at 0o700. The isDefault return is gone: empty Config.Store means default.
+- backendName moved to Config.Backend() with named constants BackendSQLite/BackendPostgres, so driver selection (App) and migrate --status reporting (CLI) share one scheme check instead of duplicating it across the library/frontend line.
+- Before no longer creates the store directory, so discover (which never opens a store) no longer provisions one. Creation happens on first store open. TestDefaultStoreDirAutoCreated still passes via migrate --status.
+- resolveStore migrates once per App, injected stores included, and Close releases only what the App opened (idempotent). fee-rzwl's Migrate use case needs to bypass that guard to report a truthful applied count; the seam is not built yet, add a no-migrate resolution path there.
+- warnf is exercised by TestWarnerReceivesAdvisories so the unused linter stays quiet until a use case raises warnings.
+- storeopen.go and resolve.go survive as the CLI's own store/fetcher/parser resolution and now duplicate App.openStore and App.resolveFetcher. That is the transitional state the ticket calls for; fee-rzwl/fee-kj8z/fee-gvuo delete them as each action moves to an App method.
+- imports_test.go walks the whole module imports-only and fails any urfave/cli import outside internal/command, extending ADR 0003's no-leak rule to the library.
+- internal/config and internal/command/storepath.go deleted; Head/OKHead/SchemaVersion out of internal/output (which now imports the root package for SchemaVersion). Every internal/command/testdata golden compared byte-identical with no -update run. make build passes.

@@ -6,10 +6,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // checkEnvelope mirrors the stdout CheckResult shape for assertions.
@@ -31,7 +30,7 @@ func newCheckDoubles(t *testing.T) (store.Store, *testsupport.FakeFetcher, *test
 func runCheck(t *testing.T, st store.Store, f *testsupport.FakeFetcher, p *testsupport.FakeParser, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Version: "1.2.3", store: st, fetch: f, parse: p}
+	d := Deps{Version: "1.2.3", opts: netOpts(st, f, p)}
 	return drive(t, d, args...)
 }
 
@@ -55,8 +54,8 @@ func TestCheckAllSuccessExits0(t *testing.T) {
 	seedActiveFeed(t, st, urlB)
 	fetcher.Register(urlA, okResult())
 	fetcher.Register(urlB, okResult())
-	parser.Register(urlA, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "Item A"}}})
-	parser.Register(urlB, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Item B"}}})
+	parser.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "Item A"}}})
+	parser.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Item B"}}})
 
 	res := runCheck(t, st, fetcher, parser, "check")
 
@@ -138,7 +137,7 @@ func TestCheckMixedExits3(t *testing.T) {
 	seedActiveFeed(t, st, good)
 	seedActiveFeed(t, st, bad)
 	fetcher.Register(good, okResult())
-	parser.Register(good, parse.ParsedFeed{})
+	parser.Register(good, core.ParsedFeed{})
 	fetcher.RegisterError(bad, core.HTTPErr(bad, 404, context.DeadlineExceeded))
 
 	res := runCheck(t, st, fetcher, parser, "check")
@@ -218,7 +217,7 @@ func TestCheckNamedRefByAlias(t *testing.T) {
 	seedActiveFeed(t, st, "https://other.example/feed.xml")
 
 	fetcher.Register(url, okResult())
-	parser.Register(url, parse.ParsedFeed{})
+	parser.Register(url, core.ParsedFeed{})
 
 	res := runCheck(t, st, fetcher, parser, "check", "myalias")
 
@@ -261,7 +260,7 @@ func TestCheckNoStoreWrites(t *testing.T) {
 	}
 
 	fetcher.Register(url, okResult())
-	parser.Register(url, parse.ParsedFeed{
+	parser.Register(url, core.ParsedFeed{
 		Items: []core.Item{{GUID: "g1", Title: "Item 1", Link: "https://a.example/1"}},
 	})
 

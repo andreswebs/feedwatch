@@ -1,6 +1,6 @@
 ---
 id: fee-lq28
-status: open
+status: closed
 deps: [fee-d32a]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -160,3 +160,9 @@ internal/command/resolve.go
 internal/command/import.go
 internal/poll/*.go
 ```
+
+## Notes
+
+**2026-08-13T14:30:51Z**
+
+Moved the Store interface out of internal/. store/store.go, store/doc.go, and store/store_test.go now live at the repository root as package store; internal/store/ holds only sqlite/. All 24 importing files were rewritten from feedwatch/internal/store to feedwatch/store (the internal/store/sqlite paths are unchanged, since the sed pattern anchored on the trailing quote). TDD: the external pin went in first and failed with 'no non-test Go files in /workspace/store', then the move made it compile. store/doc.go gained the backend contract a third-party implementor reads: ref resolves URL or unique alias, a GetFeed miss must be a usage-category *core.FeedError (feedIsNew in the add path depends on that category), UpsertItems returns only never-before-seen dedup keys, PruneItems preserves dedup tombstones, concurrent-safe across distinct feeds, migration methods may be no-ops. It also records why the interface cannot live in the root package (root imports internal/store/sqlite, which must name the interface it satisfies: a cycle). Added the missing compile-time assertion for FailingUpsertStore in internal/testsupport/failing_store_test.go; it embeds store.Store so it conformed structurally and would have silently absorbed any method added later. sqlite.Store and InMemoryStore already had theirs. docs/cli-design.md's architecture block now lists store/ as public. Every internal/command/testdata golden compared byte-identical with no -update run; make build green. Next: fee-f3u8 (feedwatch.Config, App skeleton, options constructor) is now unblocked and can type App's store port as store.Store.

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"testing"
+
+	"github.com/andreswebs/feedwatch"
 )
 
 // envelopeCases lists every stdout result envelope paired with the json keys of
@@ -14,20 +16,20 @@ var envelopeCases = []struct {
 	zero        any
 	collections []string
 }{
-	{"MigrateStatus", MigrateStatus{}, nil},
-	{"MigrateApplied", MigrateApplied{}, nil},
-	{"PollResult", PollResult{}, []string{"items", "failures", "renamed"}},
-	{"CheckResult", CheckResult{}, []string{"failures"}},
-	{"AddResult", AddResult{}, nil},
-	{"ListResult", ListResult{}, []string{"feeds"}},
-	{"RmResult", RmResult{}, nil},
-	{"EnableResult", EnableResult{}, nil},
-	{"DisableResult", DisableResult{}, nil},
-	{"ItemsResult", ItemsResult{}, []string{"items"}},
-	{"ProjectedItemsResult", ProjectedItemsResult{}, []string{"items"}},
-	{"PruneResult", PruneResult{}, nil},
-	{"DiscoverResult", DiscoverResult{}, []string{"candidates"}},
-	{"ImportResult", ImportResult{}, []string{"failed"}},
+	{"feedwatch.MigrateStatus", feedwatch.MigrateStatus{}, nil},
+	{"feedwatch.MigrateApplied", feedwatch.MigrateApplied{}, nil},
+	{"feedwatch.PollResult", feedwatch.PollResult{}, []string{"items", "failures", "renamed"}},
+	{"feedwatch.CheckResult", feedwatch.CheckResult{}, []string{"failures"}},
+	{"feedwatch.AddResult", feedwatch.AddResult{}, nil},
+	{"feedwatch.ListResult", feedwatch.ListResult{}, []string{"feeds"}},
+	{"feedwatch.RmResult", feedwatch.RmResult{}, nil},
+	{"feedwatch.EnableResult", feedwatch.EnableResult{}, nil},
+	{"feedwatch.DisableResult", feedwatch.DisableResult{}, nil},
+	{"feedwatch.ItemsResult", feedwatch.ItemsResult{}, []string{"items"}},
+	{"feedwatch.ProjectedItemsResult", feedwatch.ProjectedItemsResult{}, []string{"items"}},
+	{"feedwatch.PruneResult", feedwatch.PruneResult{}, nil},
+	{"feedwatch.DiscoverResult", feedwatch.DiscoverResult{}, []string{"candidates"}},
+	{"feedwatch.ImportResult", feedwatch.ImportResult{}, []string{"failed"}},
 	{"SchemaResult", SchemaResult{}, []string{"commands", "global_flags"}},
 	{"Schema", Schema{}, []string{"args", "flags"}},
 	{"VersionResult", VersionResult{}, nil},

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/output"
 )
 
@@ -48,8 +49,8 @@ func TestEmitWarningTracer(t *testing.T) {
 	if env.Level != "warning" {
 		t.Errorf("level = %q, want warning", env.Level)
 	}
-	if env.SchemaVersion != output.SchemaVersion {
-		t.Errorf("schema_version = %d, want %d", env.SchemaVersion, output.SchemaVersion)
+	if env.SchemaVersion != feedwatch.SchemaVersion {
+		t.Errorf("schema_version = %d, want %d", env.SchemaVersion, feedwatch.SchemaVersion)
 	}
 	if env.Code != "feed_auto_disabled" {
 		t.Errorf("code = %q, want feed_auto_disabled", env.Code)

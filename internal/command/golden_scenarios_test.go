@@ -10,6 +10,7 @@ import (
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver for stamping
 
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -71,7 +72,7 @@ func TestGoldenAutoDisableWarns(t *testing.T) {
 	h.run("auto_disable/add", 0, "add", feedURL)
 	srv.Register("/feed.xml", testsupport.Endpoint{Status: 404, Body: "not found"})
 
-	// The default failure threshold is 10 (config.Defaults). The tenth failure
+	// The default failure threshold is 10 (the library Defaults). The tenth failure
 	// crosses the threshold, disables the feed, and raises the advisory. Warm-up
 	// polls only assert the unchanged exit code; the crossing poll is golden.
 	const threshold = 10
@@ -222,7 +223,7 @@ func TestGoldenFirstPollReportsAllNewItems(t *testing.T) {
 	h := newGoldenHarness(t, "")
 	h.runExit(0, "import", opmlPath, "--no-validate")
 
-	var poll PollResult
+	var poll feedwatch.PollResult
 	h.runDecode(&poll, 0, "poll", "--force")
 
 	wantItems := numFeeds * itemsPerFeed
@@ -236,7 +237,7 @@ func TestGoldenFirstPollReportsAllNewItems(t *testing.T) {
 		t.Fatalf("poll: len(items)=%d, want %d", len(poll.Items), wantItems)
 	}
 
-	var items ItemsResult
+	var items feedwatch.ItemsResult
 	h.runDecode(&items, 0, "items", "--limit", "0")
 	if len(items.Items) != wantItems {
 		t.Fatalf("items: len(items)=%d, want %d", len(items.Items), wantItems)

@@ -3,7 +3,7 @@ package testsupport
 import (
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // FixedClock returns a core.Clock that always reports t, so backoff, due, and

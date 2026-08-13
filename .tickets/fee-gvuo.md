@@ -1,6 +1,6 @@
 ---
 id: fee-gvuo
-status: open
+status: closed
 deps: [fee-kj8z]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -178,3 +178,17 @@ internal/command/resolve.go             (deleted)
 internal/command/storeopen.go           (deleted)
 internal/command/*_test.go              (injection through feedwatch.Option)
 ```
+
+## Notes
+
+**2026-08-13T15:14:07Z**
+
+Import and Export now live on *App (import.go, export.go at the repo root) with ImportRequest/ImportResult/ImportFail/ExportRequest/ExportResult; the CLI actions are I/O plus one call plus rendering.
+
+Key points for whoever picks up fee-savm:
+- ImportRequest has a Validate bool FIELD, so it is the one request type with no Validate() error method (Go forbids the collision). The reflection walk must not assume the method exists.
+- ExportResult is headless on purpose: the OPML document is the payload, matching the schemaRegistry 'string' scalar entry.
+- The library does no filesystem I/O. os.Open, stdin, and os.Create stay in internal/command (importSource, exportDest keep their exit-64 usage errors). A read failure is now its own error, 'cannot read the OPML source', separate from 'import source is not a valid OPML document'.
+- resolve.go and storeopen.go are deleted. Deps lost store/fetch/parse and gained one unexported opts []feedwatch.Option that Deps.app appends; tests inject via storeOpts/netOpts helpers in root_test.go, i.e. through the public options.
+- internal/command no longer imports internal/{store/sqlite,fetch,parse,poll,discover,opml}, guarded by TestTheCLIHoldsNoDomainCollaborators in imports_test.go. CLI export tests therefore assert plumbing only; the OPML shape is asserted in the library's export_test.go.
+- All internal/command/testdata goldens compared byte-identical with no -update run; make build and make test-race pass.

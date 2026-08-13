@@ -485,7 +485,8 @@ feedwatch schema
 #  "global_flags":[...]}
 
 feedwatch schema poll
-# {"schema_version":1,"ok":true,"command":"poll","args":[],"flags":[{"name":"--force","aliases":["--all"],"type":"bool"}],
+# {"schema_version":1,"ok":true,"command":"poll","args":[{"name":"feed","variadic":true}],
+#  "flags":[{"name":"--force","aliases":["--all"],"type":"bool"}],
 #  "exit_codes":{"0":"all targeted feeds succeeded", ...},
 #  "output_schema":{ ... JSON Schema ... }}
 ```

@@ -75,6 +75,38 @@ feedwatch discover https://example.com
 feedwatch add https://example.com/feed.xml
 ```
 
+## Use as a library
+
+The CLI is one frontend over an importable Go library: everything the binary does,
+it does by calling `App` methods and rendering the result types they return.
+
+```go
+import "github.com/andreswebs/feedwatch"
+
+app, err := feedwatch.New(feedwatch.Defaults())
+if err != nil {
+	return err
+}
+defer func() { _ = app.Close() }()
+
+res, err := app.Poll(ctx, feedwatch.PollRequest{})
+if err != nil && res.Polled == 0 {
+	return err
+}
+for _, item := range res.Items {
+	fmt.Printf("%s\t%s\n", item.Title, item.Link)
+}
+```
+
+Four packages are public: `feedwatch` (the `App`, its options, and the request and
+result types), `feedwatch/core` (domain types and the error taxonomy),
+`feedwatch/store` (the backend interface), and `feedwatch/daemon` (an embeddable
+poll scheduler). The stability commitment they carry is stated in the `feedwatch`
+package documentation.
+
+See [docs/library.md](docs/library.md) for the use-case table, the error model,
+implementing a custom store, and embedding the daemon.
+
 ## The agent contract
 
 feedwatch is built to be driven by a program:
@@ -102,6 +134,8 @@ exit codes, environment variables, and the cron and systemd scheduling recipes.
 
 - [docs/usage.md](docs/usage.md) - command reference, global flags, exit codes,
   environment variables, and scheduling recipes.
+- [docs/library.md](docs/library.md) - embedding feedwatch as a Go library: the
+  public packages, the use-case table, the error model, and the daemon.
 - [docs/cli-design.md](docs/cli-design.md) - the design rationale and the
   agent-first principles behind the tool.
 

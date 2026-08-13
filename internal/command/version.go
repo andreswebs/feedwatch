@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"runtime/debug"
 
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/output"
 )
 
@@ -19,7 +20,7 @@ import (
 // commit stamped into the binary at build, and the Go toolchain. It is a JSON
 // result on stdout like any other command's, so it opens with the head.
 type VersionResult struct {
-	output.Head
+	feedwatch.Head
 	Version string `json:"version"`
 	Commit  string `json:"commit"`
 	Go      string `json:"go"`
@@ -27,7 +28,7 @@ type VersionResult struct {
 
 func writeVersion(w io.Writer, format, version string) error {
 	v := VersionResult{
-		Head:    output.OKHead(),
+		Head:    feedwatch.OKHead(),
 		Version: version,
 		Commit:  vcsRevision(),
 		Go:      runtime.Version(),

@@ -1,6 +1,6 @@
 ---
 id: fee-d32a
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-08-13T14:03:47Z
@@ -198,3 +198,19 @@ internal/testsupport/parser.go
 ... plus the mechanical import rewrite across every file listed by
     `grep -rl 'internal/core' --include='*.go' .`
 ```
+
+## Notes
+
+**2026-08-13T14:27:43Z**
+
+Pure relocation, done in the ADR 0007 order: internal/core -> core, then ParsedFeed into core/types.go, then Candidate + SourceAutodiscovery/SourceProbe into a new core/discover.go, then the doc update and surface pin.
+
+internal/parse.Parser and internal/discover.Discover now speak core types; internal/testsupport/parser.go dropped its internal/parse import entirely (the Parser conformance assertion lives in parser_test.go and still holds). Nine test files lost a now-unused internal/parse import; go vet catches that whole class at once.
+
+Behavior pinned by data: every internal/command/testdata/** golden compared byte-identical with no -update run, discover included, since core.Candidate keeps the JSON tags verbatim. core's only feedwatch dep is internal/terr, which is legal for a public package inside the module and is what keeps an embedder from ever naming terr.Coded (classify via errors.As on *core.FeedError).
+
+New core/doc_test.go is a compile pin in package core_test: it constructs ParsedFeed and Candidate so a later ticket that pushes either back behind internal/ breaks the build here instead of breaking an embedder.
+
+Also refreshed the architecture map in docs/cli-design.md (the internal/core/ line became core/); historical learnings and closed tickets still say internal/core on purpose, as records.
+
+Next: fee-lq28, promote the Store interface to a public store package.

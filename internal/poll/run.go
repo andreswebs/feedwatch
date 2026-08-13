@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // persistGrace bounds how long persistence may continue *after* an interrupt

@@ -1,6 +1,6 @@
 ---
 id: fee-kj8z
-status: open
+status: closed
 deps: [fee-rzwl]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -235,3 +235,19 @@ internal/command/poll.go, check.go, add.go,
 internal/command/app.go                             (WithWarner wiring)
 internal/command/schema_registry.go                 (imports the library result types)
 ```
+
+## Notes
+
+**2026-08-13T15:04:30Z**
+
+Moved poll, check, add, and discover into the library as App methods, in the TDD order discover -> add -> check -> poll (cheapest collaborators first).
+
+New root-package files: discover.go, add.go, check.go, poll.go plus their _test.go. PollRequest/CheckRequest/AddRequest/DiscoverRequest each carry Validate(); PollResult, PollFailure, CheckResult, CheckFailure, AddResult, and DiscoverResult moved verbatim (tags, MarshalJSON, RenderText, ExitCode) out of internal/command. PollResult.ExitCode was added and is pinned against poll.Result.ExitCode by a table test, so internal/command no longer imports internal/poll.
+
+Deps.app now wires WithWarner(rendererFrom(ctx).Warn); without it the auto_disable golden's stderr went empty, which is the regression that golden exists to catch. The four CLI actions are now flag decode + one App call + render; poll keeps the partial-envelope emission (err != nil && res.Polled > 0), the renamed-feeds info log, and the exitError sub-code, and check keeps its exitError.
+
+Deleted from internal/command: validateFeedURL, validateParsesAsFeed, feedIsNew, isAbsoluteHTTPURL, validateDiscoverURL, checkFeedError, shapePollResult, dashIfEmpty. Note for fee-gvuo: import.go carries a temporary copy of two of them (importURLIsAbsoluteHTTP, importEntryParsesAsFeed) with identical messages, since the OPML use case is still in the CLI; delete both when import moves and reuse the library's unexported helpers. resolve.go is now used only by import and export.
+
+Behavior change worth knowing: Add validates the URL over the network before resolving the store (the documented three-step shape), so an unfetchable URL is rejected without provisioning a store. App.Poll returns the zero PollResult on an early failure rather than an all-zeros envelope with an OK head.
+
+Every internal/command/testdata/** golden compared byte-identical with no -update run; make build and make test-race both pass. Learnings appended to docs/specs/learnings.md.

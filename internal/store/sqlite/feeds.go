@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 const feedColumns = `url, alias, interval_seconds, status, etag, last_modified,

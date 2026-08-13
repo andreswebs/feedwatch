@@ -1953,3 +1953,391 @@ key for those. No conditional logic needed;`network`/`parse`/`timeout`failures n
 - **`add` classifies every validation failure (bad URL, unfetchable, blocked
   redirect) as `CatUsage`/`ErrUsage`**, so all of them exit 64 — worth knowing
   when documenting exit codes for SSRF-redirect and non-feed rejection cases.
+
+## fee-d32a — Promote core to the public API surface
+
+- **The move is mechanical, but three test files needed a hand fix the sed pass
+  could not do.** Rewriting `parse.ParsedFeed` to `core.ParsedFeed` left the
+  `internal/parse` import unused in nine files (all the `poll` and `command`
+  tests that only imported it to name the type), and left
+  `internal/parse/parse_test.go` naming `core` without importing it. `go vet`
+  reports both classes at once, so vetting after the sweep is faster than
+  reading the diff.
+- **`internal/testsupport/parser.go` no longer imports `internal/parse` at
+  all.** The `FakeParser` type only mentioned `parse` for the `ParsedFeed`
+  return; the `var _ parse.Parser = (*testsupport.FakeParser)(nil)` assertion
+  that keeps the double honest lives in `parser_test.go`, so the port
+  conformance check survives the import removal.
+- **The relocation is behavior-preserving, confirmed by data rather than
+  inspection.** Every `internal/command/testdata/**` golden compared
+  byte-identical with no `-update` run, including `discover`'s, because
+  `core.Candidate` carries the JSON tags verbatim.
+- **`core` still imports `internal/terr`, and that is intentional.** A public
+  package may import an internal one inside the same module; only external
+  importers are blocked. `core.FeedError` exposes `Code()`, `ExitCode()`, and
+  `Hint()` as methods, so an embedder classifies through `errors.As` and never
+  names `terr.Coded`. `go list -deps ./core | grep feedwatch` is the one-line
+  check that the dependency stays that narrow.
+- **`core/doc_test.go` is a compile pin, not a behavior test.** It constructs
+  `ParsedFeed` and `Candidate` from `package core_test`, so a later ticket that
+  pushes either type back behind `internal/` fails to compile here rather than
+  failing silently at the point an embedder tries to use the library.
+
+## fee-lq28 — Promote the Store interface to a public store package
+
+- **The RED step was a real compile failure, not a formality.** Moving
+  `store_test.go` to `store/` and pointing it at
+  `github.com/andreswebs/feedwatch/store` before the interface itself moved
+  makes `go vet ./store/` fail with "no non-test Go files", which is exactly
+  the "an external package cannot implement this interface" state the ticket
+  removes. The pin stays useful afterwards: `fakeStore` lives in
+  `package store_test` and names only `core` and `store` types, so a later
+  ticket that pushes an argument type back behind `internal/` breaks here.
+- **The sed sweep needed no hand fixes this time.** Unlike the `core` move,
+  every rewritten file already imported the interface package under the name
+  `store`, and the package clause was unchanged, so nothing was left importing
+  a package it no longer names. `internal/store/sqlite` import paths keep their
+  `internal/` prefix because the pattern anchored on the trailing quote
+  (`feedwatch/internal/store"`).
+- **`internal/store/` still exists, and only holds `sqlite/`.** An internal
+  package importing a public one in the same module is the same legal direction
+  as `core` importing `internal/terr`; only external importers are blocked from
+  `internal/**`.
+- **The compliance assertions are the compatibility tripwire.** `sqlite.Store`
+  and `testsupport.InMemoryStore` already had one; `FailingUpsertStore` did not,
+  because it embeds `store.Store` and satisfies the interface structurally.
+  That is precisely the case worth pinning: an embedded interface silently
+  absorbs any method added later, so `internal/testsupport/failing_store_test.go`
+  now asserts it explicitly.
+- **Behavior-preserving, confirmed by data.** Every
+  `internal/command/testdata/**` golden compared byte-identical with no
+  `-update` run.
+
+## fee-f3u8 — feedwatch.Config, App skeleton, and the options constructor
+
+- **The default store path had to become lazy, not just move.** The ticket makes
+  the CLI pass `--db` through verbatim, empty included, so nothing resolves the
+  XDG default at flag-parse time any more. Both the App and the CLI's surviving
+  `openStore` need the same resolution plus first-run directory creation, so it
+  landed as `Config.StorePath()`: a non-empty `Store` is returned untouched, an
+  empty one resolves `DefaultStorePath()` and creates its parent at `0o700`.
+  Keeping `DefaultStorePath()` pure (no I/O) is what makes it table-testable
+  against `XDG_STATE_HOME` and `HOME`.
+- **Dropping `ensureStoreDir` from the `Before` hook is a visible behavior
+  change, in the right direction.** Previously every command created
+  `$XDG_STATE_HOME/feedwatch/` even when it never opened a store, so `discover`
+  provisioned a database directory it had no use for. Creation now happens on
+  first store open. `TestDefaultStoreDirAutoCreated` still passes because
+  `migrate --status` does open the store.
+- **`backendName` became `Config.Backend()` to avoid a duplicated scheme
+  check.** The App picks a driver and `migrate --status` reports a name from the
+  same rule; with `Config` public, one method serves both and there is nothing
+  to drift. `BackendSQLite`/`BackendPostgres` are named constants because the
+  value is contract output, not an internal label.
+- **An injected store is migrated but never closed.** Those two halves of
+  ownership pull in opposite directions and are easy to conflate: the App must
+  bring any backend to the schema version its use cases expect (so `resolveStore`
+  calls `Migrate` once per App, injected or not), while `Close` releases only
+  what the App opened. `InMemoryStore.Migrate` is idempotent and
+  `FailingUpsertStore` delegates through its embedded store, so the doubles
+  absorbed the new `Migrate` call with no changes.
+- **`warnf` exists ahead of its callers deliberately, and is tested for it.**
+  The `unused` linter flags an unexported method nothing calls, and no use case
+  raises a warning yet, so `TestWarnerReceivesAdvisories` is what keeps the port
+  wired and the build green until the poll use case lands.
+- **A repo-wide AST walk is a cheap way to pin the no-leak rule.**
+  `imports_test.go` parses every `.go` file in the module imports-only and fails
+  any `urfave/cli` import outside `internal/command`, which covers ADR 0003's
+  rule for the library, the domain packages, and every frontend added later, not
+  just the two contract files `run_test.go` already checked.
+- **Behavior-preserving, confirmed by data.** Every
+  `internal/command/testdata/**` golden compared byte-identical with no
+  `-update` run.
+
+## fee-rzwl — App use cases: store-only commands
+
+- **`App.Migrate` needed a second store-resolution seam, not a flag.**
+  `resolveStore` applies pending migrations once per `App`, which is exactly
+  what makes `applied` untruthful for the one use case whose job is to report
+  that count. Splitting the open from the migrate (`storeLocked`, plus
+  `resolveStoreUnmigrated` and `markMigrated`) keeps the guard intact for the
+  other seven while letting `Migrate` do the work itself and then record it, so
+  a later use case on the same `App` still does not repeat it.
+- **`PruneRequest`'s pointer fields replace `cmd.IsSet`, and that is the whole
+  reason they are pointers.** The framework's set-ness check was the only thing
+  distinguishing `--keep-days 0` (prune everything older than now) from the flag
+  being absent. Moving the policy into the library meant carrying that
+  distinction in the request type, which a plain `int` cannot express. The CLI
+  now decodes set-ness into the pointer once, in `pruneRequest`.
+- **`Validate` delegating to the resolver is what keeps the two honest.**
+  `PruneRequest.Validate` and `ItemsRequest.Validate` both resolve against a
+  fixed instant and discard the result. The parsing and enum rules are therefore
+  stated once, in `policy`/`query`, and a validation pass cannot accept
+  something the use case then rejects.
+- **`dashIfEmpty` is duplicated across the package boundary on purpose, for one
+  ticket.** `discover` still renders its own text table from `internal/command`
+  and moves in `fee-kj8z`; copying four lines beats exporting a formatting
+  helper from the library or having the CLI import a library internal.
+- **The `--fields` field-name validation moved with `suggest.go` intact.**
+  `unknownFieldMessage` and the Levenshtein suggester came across whole, with
+  their test, because the exact message (did-you-mean plus the full valid list)
+  is pinned by `internal/command/testdata/err/` goldens.
+- **Behavior-preserving, confirmed by data.** Every
+  `internal/command/testdata/**` golden compared byte-identical with no
+  `-update` run, and the reflected `output_schema` for all seven commands is
+  unchanged: `jsonschema.Reflect` emits structural JSON Schema only, with no
+  package or type name in it, so moving the result structs to the root package
+  could not shift the emitted contract.
+
+## fee-kj8z — App use cases: network commands
+
+- **`App.Poll` is the one use case whose result and error are both meaningful.**
+  `poll.Run` can commit some feeds' writes and then fail, so the method returns
+  a populated `PollResult` alongside a non-nil error. The contract is stated on
+  the method rather than left implicit in the CLI: `res.Polled > 0` with a
+  non-nil error is the truthful partial envelope a caller should still render,
+  and `res.Polled == 0` is an early failure whose result must be discarded.
+  `Poll` now returns the zero `PollResult` explicitly in that early case, so a
+  frontend cannot render a misleading all-zeros envelope with an OK head.
+- **The auto-disable advisory only survived the move because of `WithWarner`.**
+  `poll.Deps.Warn` used to be wired straight to the renderer inside the action.
+  With the loop in the library, the App's `Warner` is the only path back to
+  stderr, so `Deps.app` gained `WithWarner(rendererFrom(ctx).Warn)`. Until that
+  wiring landed the `auto_disable` golden's stderr was empty, which is exactly
+  the regression the golden exists to catch.
+- **`PollResult.ExitCode` duplicates `poll.Result.ExitCode` on purpose, pinned
+  by a table test.** The envelope already carries `Polled` and `Failed`, so the
+  CLI no longer needs to import `internal/poll` at all; the shared test over a
+  grid of polled/failed pairs is what keeps the two derivations from drifting.
+- **`Add` validates the network before opening the store.** The old action
+  opened the store first because the resolver did; the library's lazy store
+  resolution means an unfetchable URL is now rejected without provisioning
+  anything, which matches the documented three-step shape (syntax, then proof it
+  parses as a feed, then the `GetFeed` probe that decides `created`).
+- **`Discover` is the test that proves lazy store resolution works.** Running it
+  against a config whose store path points into a `t.TempDir()` leaves that
+  directory empty, which is only true because `New` performs no I/O and
+  `Discover` never calls `resolveStore`.
+- **`internal/command/import.go` carries a temporary copy of the two add-time
+  helpers.** `isAbsoluteHTTPURL` and `validateParsesAsFeed` moved into the root
+  package unexported, so the OPML import action (still in the CLI until
+  `fee-gvuo`) got its own `importURLIsAbsoluteHTTP` and
+  `importEntryParsesAsFeed` with identical messages. Duplicating ten lines for
+  one ticket beats exporting library internals or blocking on the OPML move.
+- **Behavior-preserving, confirmed by data.** Every
+  `internal/command/testdata/**` golden compared byte-identical with no
+  `-update` run, `make build` passes, and `make test-race` is clean across both
+  fan-out use cases.
+
+## fee-gvuo — App use cases: OPML import and export
+
+- **The filesystem boundary belongs to the frontend, so the use cases exchange
+  bytes.** `App.Import` takes the OPML document as `[]byte` and `App.Export`
+  returns it as a string; opening the file, reading stdin, and creating the `-o`
+  destination all stay in `internal/command`. That is what lets an HTTP handler
+  reuse the same two methods with a request and a response body.
+- **`ExportResult` is deliberately headless.** Every other result envelope
+  carries the schema head, but export's payload _is_ the OPML document; wrapping
+  it would contradict the `schemaRegistry` entry that already describes export as
+  a `string` scalar rather than a JSON envelope.
+- **`ImportRequest.Validate` is a field, so that request type has no
+  `Validate() error` method.** Go forbids a field and a method sharing a name.
+  Import has nothing to validate syntactically (an unparseable document is
+  reported by `Import` itself), so the field wins; the reflection ticket that
+  walks every request type must not assume the method is universal.
+- **Reading the source moved out of `opml.Parse`, which split one error into
+  two.** The action used to hand a reader straight to the parser, so an I/O
+  failure surfaced as "not a valid OPML document". Now `io.ReadAll` runs first
+  and a read failure is its own usage error ("cannot read the OPML source"),
+  which is the honest classification.
+- **Retiring the resolver replaced three typed test seams with one.**
+  `Deps.store`, `Deps.fetch`, and `Deps.parse` became a single
+  `opts []feedwatch.Option`, appended by `Deps.app`. The `storeOpts`/`netOpts`
+  helpers in `root_test.go` keep the call sites as short as the old struct
+  fields while expressing injection in public library types.
+- **The CLI's own OPML assertions had to move down a layer.** `export_test.go`
+  parsed its output with `internal/opml`, which the CLI may no longer import;
+  the document's shape is now asserted in the library's `export_test.go`, and
+  the CLI test asserts only that the document reaches stdout or the `-o` file.
+  `TestTheCLIHoldsNoDomainCollaborators` in `imports_test.go` is what keeps the
+  six banned adapter imports out for good.
+- **Behavior-preserving, confirmed by data.** Every
+  `internal/command/testdata/**` golden compared byte-identical with no
+  `-update` run, `make build` passes, and `make test-race` is clean.
+
+## fee-savm — Derive CLI flags from request-struct tags by reflection
+
+- **The projection uncovered a real contract drift, and fixing it cost the
+  byte-identity criterion.** The ticket asked for `feedwatch schema` output to be
+  byte-identical before and after, and it is for every flag on every command. It
+  is not for two `args` arrays: `poll` and `check` accepted trailing feed
+  references through urfave's implicit positional tail while declaring no
+  `Arguments`, so `schema poll` reported `"args":[]` even though `ArgsUsage` said
+  `[FEED...]` and [cli-design.md](../cli-design.md) documented
+  `"args":[{"name":"feed","variadic":true}]`. Declaring the variadic argument, as
+  the ticket's own design mandates, makes the introspected surface agree with both
+  the design doc and reality. The schema fixture for those two commands was
+  regenerated deliberately; every other fixture, and all of
+  `internal/command/testdata/**`, compared byte-identical with no `-update` run.
+- **A variadic `StringArgs` needs `Max: -1`.** With the zero value the framework
+  refuses to parse the argument at all ("args feed has max 0, not parsing
+  argument"), and declaring one moves the values out of `cmd.Args().Slice()` into
+  `cmd.StringArgs(name)`. Both halves matter: `argsFor` sets `Max: -1` and `bind`
+  reads the named accessor, so the previous `cmd.Args().Slice()` call sites had to
+  change with the declaration rather than after it.
+- **Construction and binding live in one table value.** `flagKinds` maps a
+  `reflect.Type` to a `flagKind{newFlag, bind}` pair rather than having `flagsFor`
+  and `bind` each carry their own switch. Two switches over the same six types
+  would be free to drift; one map entry cannot.
+- **A missing tag panics, not just an unmapped type.** The ticket specified a
+  panic for a field type absent from the mapping table. The same argument applies
+  to a field carrying neither `flag` nor `arg`: without the panic, adding a
+  request field would silently produce no CLI surface, which is exactly the drift
+  the ticket exists to prevent. `flag:"-"` is the explicit opt-out.
+- **One usage string cannot be a struct tag.** `--fields` enumerates the
+  projectable item field names from `core.ItemFieldNames()`, and a tag is a
+  compile-time constant. Rather than duplicating the list into the tag, `withUsage`
+  overrides that one flag's usage after projection. It is a named, panicking
+  escape hatch (an unknown flag name is a programming error), so the exception is
+  visible instead of hidden.
+- **The bare-schema golden had to exclude the error inventory.**
+  `TestSchemaNewSentinelAppears` registers a test-only sentinel into the
+  process-wide `terr` registry and cannot unregister it, so the `errors` array in
+  `schema` output is not stable across a package run: the new fixture passed alone
+  and failed in the suite. The golden now normalizes `errors` to a token; the
+  inventory is pinned by `TestSchemaErrorInventory` instead, and the flags and
+  arguments the fixture exists to pin are untouched.
+- **The schema envelope carries no usage text, so a second golden was needed.**
+  `FlagSchema` records name, aliases, type, and default but not usage, which means
+  a schema-only fixture would not have caught a mangled `usage` tag. A companion
+  `help/` golden set pins `--help` for the root and every command, and it compared
+  byte-identical throughout the migration; together the two fixtures cover every
+  tag the projector reads.
+- **`--keep-days 0` is now pinned at the CLI, not just at the projector.** The
+  pointer entry in the mapping table is the only place where the Go type and the
+  flag type deliberately disagree, so it is covered twice: `bind`'s set-versus-unset
+  round trip, and `TestPruneExplicitZeroKeepDays` driving the real boundary.
+
+## fee-vbid — feedwatch/daemon: the embeddable poll scheduler
+
+- **Drop-on-overlap forces the poll off the loop goroutine.** A loop that calls
+  `App.Poll` inline cannot drop a tick: with a caller-driven channel an
+  unbuffered send blocks until the loop comes back around, and with a
+  `time.Ticker` the cap-1 buffer queues exactly one stale tick that fires a
+  second poll the instant the first returns. Both are "queued", which the design
+  forbids. `pollOnce` therefore runs the poll in a goroutine (its result lands on
+  a buffered channel, so the goroutine always exits) while the caller keeps
+  selecting on the tick channel and discards whatever arrives. The drop is then a
+  property of the code rather than of the channel's buffering, and the test can
+  hold a poll open on a gated fetcher, deliver several ticks, and assert one
+  event.
+- **The "Run twice" test needs proof the first Run is in its loop.** Spawning the
+  first `Run` in a goroutine and immediately calling `Run` again races on which
+  call wins the guard: when the second call wins, it blocks in the loop forever
+  and the test hangs rather than failing. Sending one tick first and receiving
+  its event proves a `Run` is already looping, so the direct call is
+  unambiguously the loser and returns `ErrAlreadyRunning`.
+- **The guard is not reset on exit, deliberately.** `Run` closes `Events` before
+  returning, so a second run would publish into a closed channel. The
+  single-use guard is a `CompareAndSwap` that is never cleared, which makes a
+  re-run an error instead of a panic.
+- **A store double, not a fetcher double, produces `Event.Err`.** A feed that
+  fails to fetch is result data (it lands in `Result.Failures`, and `Poll`
+  returns nil), so driving the error path needs a whole-invocation failure: a
+  `store.Store` wrapper whose first `DueFeeds` call fails, embedding the
+  interface so only that one method is overridden. The second tick then proves
+  the scheduler survived.
+
+## fee-3p3r — Public API documentation and runnable examples
+
+- **The learnings for this epic live here, not in the file the ticket named.**
+  The ticket points at `docs/specs/001-initial-implementation/learnings.md`, but
+  every other ADR 0007 ticket (`fee-d32a`, `fee-lq28`, `fee-f3u8`, `fee-rzwl`,
+  `fee-kj8z`, `fee-gvuo`, `fee-savm`, `fee-vbid`) recorded into
+  `docs/specs/learnings.md`. Splitting one epic across two files would be worse
+  than following the ticket literally, so the convention won.
+- **Three structural findings the epic paid for, restated as the surface's
+  rationale.** They are now documented where an embedder reads them rather than
+  only where an implementor recorded them:
+  - `core` and `store` cannot be merged into the root package. The internal
+    adapters import the domain types and the `Store` interface, and the root
+    package imports those adapters to build the default store from
+    configuration, so declaring either at the root closes an import cycle. The
+    argument is stated in `store/doc.go`, which is the package an external
+    implementor reads first.
+  - `ParsedFeed` had to move from `internal/parse` to `core` for the public
+    `Parser` port to be assignable at all. A public interface whose method
+    signature names an `internal/` type is uninhabitable from outside the module:
+    it compiles, and no external type can ever satisfy it. The same applies to
+    `Candidate`, which is why `core/doc_test.go` pins both by constructing them
+    from `package core_test`.
+  - `New` must not open the store eagerly. `Discover` is read-only and touches
+    no store, so an eager constructor would create a database file (and its
+    parent directory, under the XDG default) for every `feedwatch discover`
+    invocation. Lazy opening also puts the "any command applies pending
+    migrations" guarantee on first use rather than on construction, which is why
+    the migrate use case deliberately bypasses that guard to report a truthful
+    applied count.
+- **The repo's `defer func() { _ = x.Close() }()` convention outranks the
+  idiomatic doc snippet.** `errcheck` is enabled, and an example is ordinary
+  compiled test code, so the conventional `defer app.Close()` a godoc snippet
+  would show fails the gate. The examples use the checked form and `doc.go`'s
+  snippet was changed to match, so a reader copying either one gets code that
+  passes this project's lint.
+- **A doc-coverage sweep found only what a linter cannot see.** `revive`'s
+  exported rule is not enabled, so the check was a throwaway `go/ast` walk over
+  the four public packages asserting every exported identifier carries a comment
+  starting with its own name. It reported four gaps: the two port interface
+  methods (`Fetcher.Fetch`, `Parser.Parse`), and the members of two grouped
+  const blocks (`BackendSQLite`/`BackendPostgres`,
+  `SourceAutodiscovery`/`SourceProbe`) that had a block-level comment only. The
+  interface-method gap is the one worth noticing: a port's method comment is
+  where an implementor learns the contract, and it was the one place with none.
+- **Which examples run is a deliberate split, and `go vet` is what keeps it
+  honest.** `ExampleNew` and `ExampleApp_Items` carry `// Output:` and run
+  against a temp-dir store, which is deterministic because migrations are
+  idempotent and an empty store returns an empty projection. `ExampleApp_Add`,
+  `ExampleApp_Poll`, `ExampleApp_Poll_errors`, `ExampleWithStore`, and
+  `ExampleScheduler` carry none, so they are compiled and never executed: the
+  first three would reach the network and write to the default store path, and
+  the last two would panic on the stub's embedded nil interface. `go vet`'s
+  example check is what catches a misnamed `ExampleApp_Poll` that would
+  otherwise silently never compile against a real method.
+- **`ExampleNew` asserts the no-I/O rule as data.** It stats the configured
+  store path after `New` and prints `store created by New: false`, so the
+  lifecycle promise in `doc.go` is pinned by a running test rather than only
+  claimed in prose.
+
+## fee-ui25 — Library and thin frontends (epic closeout)
+
+- **The epic's own work was verification, plus one gap the children's criteria
+  could not see.** Each of the nine children asserted its own slice; the epic
+  asserts the whole. Four of the five acceptance criteria were already
+  demonstrable (`go list` shows exactly `feedwatch`, `core`, `store`, `daemon`
+  plus two `main` packages as non-internal; `internal/command` imports only
+  `output`, `terr`, and `jsonschema`, with the domain-collaborator ban enforced
+  as a test by `TestTheCLIHoldsNoDomainCollaborators`; no tracked golden is
+  modified; `make build` and `make test-race` pass). The fifth exposed the gap.
+- **"Mandatory table test" was satisfied in letter but not in effect.** ADR 0007
+  requires a test that walks _every_ request type in the library, because an
+  unmapped field type is the one property of the reflection layer that cannot
+  fail at compile time. The table was hand-maintained and its comment argued
+  that a request type no frontend wires cannot affect any input surface. True of
+  wiring, but not of the risk being guarded: declaring the type is what admits
+  the unmapped field, so the failure has to land when the type is added, not
+  when a frontend first wires it and panics at command-tree construction.
+  `TestRequestSurfaceCoverage` closes it by parsing the library's own source for
+  exported `*Request` types and requiring each to appear in the table, which
+  makes the omission of the next use case a test failure.
+- **The library's source is the only enumeration of its exported types.**
+  Reflection cannot list a package's declarations, so the guard reads them with
+  `go/ast`, following the precedent already set by the module-root
+  `imports_test.go` architectural guards. Both take the same two precautions:
+  fail when the walk finds nothing, so the guard can never pass vacuously, and
+  glob plus `parser.ParseFile` rather than `parser.ParseDir`, which staticcheck
+  rejects as deprecated (SA1019) since it ignores build tags.
+- **A guard that cannot be seen failing is not yet a guard.** This one passed
+  the moment it was written, since the table was complete, so it was checked by
+  deleting one row and confirming the failure named `feedwatch.PruneRequest`
+  before restoring it. Writing an always-green assertion and trusting it is how
+  a vacuous guard enters a suite.

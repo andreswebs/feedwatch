@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runEnable drives the enable command through the root with an injected store
@@ -16,13 +17,13 @@ import (
 func runEnable(t *testing.T, st store.Store, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"enable"}, args...)...)
 }
 
-// enableEnvelope mirrors the stdout EnableResult shape for assertions.
+// enableEnvelope mirrors the stdout feedwatch.EnableResult shape for assertions.
 type enableEnvelope struct {
-	Feed FeedView `json:"feed"`
+	Feed feedwatch.FeedView `json:"feed"`
 }
 
 // TestEnableDisabledFeed covers behavior 1: enable on a disabled feed sets

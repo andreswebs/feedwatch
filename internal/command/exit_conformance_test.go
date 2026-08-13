@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/terr"
 )

@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/andreswebs/feedwatch/internal/config"
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/output"
 )
 
@@ -19,8 +19,8 @@ const (
 )
 
 // configFrom returns the resolved configuration placed by the Before hook.
-func configFrom(ctx context.Context) config.Config {
-	c, _ := ctx.Value(keyConfig).(config.Config)
+func configFrom(ctx context.Context) feedwatch.Config {
+	c, _ := ctx.Value(keyConfig).(feedwatch.Config)
 	return c
 }
 

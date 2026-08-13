@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/mmcdole/gofeed"
 	"github.com/mmcdole/gofeed/rss"
 )
@@ -32,18 +32,18 @@ func New() *GofeedParser {
 	return &GofeedParser{}
 }
 
-// Parse decodes a feed body into a ParsedFeed. A failure to parse returns a
+// Parse decodes a feed body into a core.ParsedFeed. A failure to parse returns a
 // parse-category *core.FeedError scoped to baseURL.
-func (p *GofeedParser) Parse(_ context.Context, body []byte, baseURL string) (ParsedFeed, error) {
+func (p *GofeedParser) Parse(_ context.Context, body []byte, baseURL string) (core.ParsedFeed, error) {
 	feed, err := gofeed.NewParser().Parse(bytes.NewReader(body))
 	if err != nil {
-		return ParsedFeed{}, core.ParseErr(baseURL, err)
+		return core.ParsedFeed{}, core.ParseErr(baseURL, err)
 	}
 
 	feedBase := feed.Link
 	feedAuthor := feedAuthorName(feed)
 
-	pf := ParsedFeed{
+	pf := core.ParsedFeed{
 		Title: feed.Title,
 		TTL:   extractTTL(body, feed.FeedType),
 		Items: make([]core.Item, 0, len(feed.Items)),

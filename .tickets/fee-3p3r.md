@@ -1,6 +1,6 @@
 ---
 id: fee-3p3r
-status: open
+status: closed
 deps: [fee-savm, fee-vbid]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -174,3 +174,17 @@ AGENTS.md                                          (reference table row)
 CHANGELOG.md                                       (epic entry)
 docs/specs/001-initial-implementation/learnings.md (appended)
 ```
+
+## Notes
+
+**2026-08-13T15:47:37Z**
+
+Documented the public library surface and shipped the runnable examples; make build green, markdownlint 0 issues.
+
+Godoc: an ad-hoc go/ast sweep over feedwatch, core, store, daemon found four gaps, now fixed: Fetcher.Fetch and Parser.Parse (a port's method comment is where an implementor learns the contract, and it had none), plus the members of two grouped const blocks (BackendSQLite/BackendPostgres, SourceAutodiscovery/SourceProbe) that carried only a block comment. Everything else was already covered by the earlier epic tickets. doc.go was rewritten to answer purpose and promises: frontend model, the five ports and which are extension points, the lifecycle (New does no I/O, lazy store, Close releases only what the App opened), the result-envelope contract with SchemaVersion, the error model, and a '# Stability' section. core/store/daemon package docs reference that statement rather than restating it.
+
+Examples: example_test.go (package feedwatch_test) has ExampleNew, ExampleApp_Add, ExampleApp_Poll, ExampleApp_Items, ExampleWithStore, ExampleApp_Poll_errors; daemon/example_test.go has ExampleScheduler. ExampleNew and ExampleApp_Items are genuinely runnable with deterministic // Output: (temp-dir store); the rest are compile-only because they reach the network or use a stub store. ExampleNew stats the configured store path after New and prints 'store created by New: false', so the no-I/O promise is pinned by a running test. Note the examples use the repo's checked 'defer func() { _ = app.Close() }()' form, because errcheck rejects the idiomatic 'defer app.Close()'; doc.go's snippet was changed to match.
+
+Docs: docs/library.md (new) covers the four packages, construction and lifecycle, the use-case table, the result-types-are-the-contract point, the error model with a category-to-handling table, warnings, implementing a custom store (including the explicit 'test doubles are not published' decision), and embedding the daemon. README gained 'Use as a library' plus a Documentation link; AGENTS.md gained the reference-table row and its one-line project description now says library-with-a-CLI-frontend; CHANGELOG has one consumer-facing Added entry for the whole epic (importable, CLI contract unchanged, four packages, pre-1.0 caveat).
+
+Two divergences worth knowing: (1) the epic learnings were appended to docs/specs/learnings.md, not the docs/specs/001-initial-implementation/learnings.md the ticket named, because every other ADR 0007 ticket recorded there; (2) .markdownlint.yaml now sets MD010 code_blocks: false, because --fix was replacing the tabs in the Go snippets with single spaces, mangling code copied verbatim from gofmt'd examples. ADR 0007 was not edited; no implementation divergence from it was found.

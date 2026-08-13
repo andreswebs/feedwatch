@@ -7,11 +7,9 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/fetch"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/output"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
 	"github.com/andreswebs/feedwatch/internal/terr"
 )
 
@@ -22,9 +20,11 @@ import (
 // exit code with 128+signum for a graceful stop; main wires it from
 // signal.Notify and tests leave it nil.
 //
-// The store, fetcher, and parser are resolved lazily by resolve.go and are not
-// part of the contract; the unexported fields below are the same-package test
-// seam that injects fakes, left nil in production.
+// Collaborators are the library's business: every action builds an App, which
+// resolves its own store, fetcher, and parser from the configuration. The single
+// unexported field below carries extra library options an action's App is built
+// with; it is the same-package test seam that injects doubles through the public
+// options, and is empty in production.
 type Deps struct {
 	In      io.Reader
 	Out     io.Writer
@@ -33,9 +33,7 @@ type Deps struct {
 	Version string
 	Signal  <-chan os.Signal
 
-	store store.Store
-	fetch fetch.Fetcher
-	parse parse.Parser
+	opts []feedwatch.Option
 }
 
 // Run is the single exit boundary (ADR 0003). It builds and runs the command

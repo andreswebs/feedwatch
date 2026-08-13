@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/output"
 )
 
@@ -67,13 +68,13 @@ func TestRendererTextResultLabelsNoColor(t *testing.T) {
 // and ok never leak into human output for a headed envelope.
 func TestRendererTextOmitsEmbeddedHead(t *testing.T) {
 	type result struct {
-		output.Head
+		feedwatch.Head
 		Polled int `json:"polled"`
 	}
 
 	var out bytes.Buffer
 	r := &output.Renderer{Format: "text", OutColor: false, Out: &out}
-	if err := r.Result(result{Head: output.OKHead(), Polled: 3}); err != nil {
+	if err := r.Result(result{Head: feedwatch.OKHead(), Polled: 3}); err != nil {
 		t.Fatalf("Result: %v", err)
 	}
 

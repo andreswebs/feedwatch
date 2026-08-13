@@ -8,10 +8,10 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/fetch"
 	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // Deps are the collaborators and tuning knobs the poll orchestrator needs. The
@@ -52,7 +52,7 @@ type WarnFunc func(code, message, hint string, details any)
 type feedOutcome struct {
 	feed   core.Feed
 	result core.FetchResult
-	parsed parse.ParsedFeed
+	parsed core.ParsedFeed
 	err    *core.FeedError
 }
 

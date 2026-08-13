@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runRm drives the rm command through the root with an injected store double,
@@ -15,11 +15,11 @@ import (
 func runRm(t *testing.T, st store.Store, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"rm"}, args...)...)
 }
 
-// rmEnvelope mirrors the stdout RmResult shape for assertions.
+// rmEnvelope mirrors the stdout feedwatch.RmResult shape for assertions.
 type rmEnvelope struct {
 	Removed string `json:"removed"`
 }

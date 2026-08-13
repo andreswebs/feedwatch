@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runPrune drives the prune command through the root with an injected store
@@ -16,11 +16,11 @@ import (
 func runPrune(t *testing.T, st store.Store, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"prune"}, args...)...)
 }
 
-// pruneEnvelope mirrors the stdout PruneResult shape for assertions.
+// pruneEnvelope mirrors the stdout feedwatch.PruneResult shape for assertions.
 type pruneEnvelope struct {
 	Pruned int `json:"pruned"`
 }
@@ -132,5 +132,27 @@ func TestPruneRequiresBound(t *testing.T) {
 	}
 	if res.out != "" {
 		t.Errorf("stdout should be empty on usage error, got %q", res.out)
+	}
+}
+
+// TestPruneExplicitZeroKeepDays pins the set-versus-unset asymmetry that the
+// reflection projector has to preserve (ADR 0007): --keep-days 0 names a policy
+// (tombstone everything older than now) and succeeds, while the flag being absent
+// names none and is the usage error above. A projector that bound the flag's zero
+// value unconditionally would collapse the two.
+func TestPruneExplicitZeroKeepDays(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://x.example/feed.xml"
+	seedItem(t, st, url, "old", "old", now.Add(-time.Hour), now.Add(-time.Hour))
+
+	res := runPrune(t, st, clk, "--keep-days", "0")
+	if res.code != 0 {
+		t.Fatalf("prune --keep-days 0 should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	if env := parsePruneEnvelope(t, res.out); env.Pruned != 1 {
+		t.Errorf("pruned = %d, want 1\ngot: %q", env.Pruned, res.out)
 	}
 }

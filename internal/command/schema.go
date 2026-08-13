@@ -8,7 +8,7 @@ import (
 
 	cliv3 "github.com/urfave/cli/v3"
 
-	"github.com/andreswebs/feedwatch/internal/output"
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/terr"
 )
 
@@ -20,7 +20,7 @@ import (
 // therefore also appears on each Schema nested in a SchemaResult, which
 // is self-describing and harmless.
 type Schema struct {
-	output.Head
+	feedwatch.Head
 	Command   string            `json:"command"`
 	Args      []ArgSchema       `json:"args"`
 	Flags     []FlagSchema      `json:"flags"`
@@ -75,7 +75,7 @@ type SchemaError struct {
 // enrichment, and each command's per-command exit_codes map and derived
 // output_schema are carried inside Commands as additive detail.
 type SchemaResult struct {
-	output.Head
+	feedwatch.Head
 	Tool        string        `json:"tool"`
 	Version     string        `json:"version"`
 	Commands    []Schema      `json:"commands"`
@@ -132,7 +132,7 @@ func (d Deps) schemaAction(ctx context.Context, cmd *cliv3.Command) error {
 
 	commands := commandSchemas(root)
 	result := SchemaResult{
-		Head:        output.OKHead(),
+		Head:        feedwatch.OKHead(),
 		Tool:        root.Name,
 		Version:     d.Version,
 		Commands:    commands,
@@ -216,7 +216,7 @@ func skipCommand(c *cliv3.Command) bool {
 func commandSchema(c *cliv3.Command) Schema {
 	meta := registryFor(c.Name)
 	return Schema{
-		Head:      output.OKHead(),
+		Head:      feedwatch.OKHead(),
 		Command:   c.Name,
 		Args:      argSchemas(c.Arguments),
 		Flags:     flagSchemas(c.Flags),

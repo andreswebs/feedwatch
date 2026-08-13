@@ -61,6 +61,28 @@ releases.
 
 ### Added
 
+- **feedwatch is now importable as a Go library**, adopting
+  [ADR 0007](docs/adr/0007-library-and-frontends.md). The substance moved out of
+  the CLI actions into an application service, `App`, with one method per use
+  case over request and result types it owns; the CLI became a thin frontend that
+  assembles a request, calls one method, and renders the result. Four packages are
+  public: `feedwatch` (`App`, `New`, the options, `Config`, and the request and
+  result types), `feedwatch/core` (domain types and the error taxonomy),
+  `feedwatch/store` (the `Store` interface an alternative backend implements), and
+  `feedwatch/daemon` (an embeddable poll scheduler that calls `App.Poll` on a wake
+  cadence). Everything else, including the SQLite, HTTP, and parser adapters, the
+  poll orchestrator, and the CLI itself, stays under `internal/`.
+
+  **The CLI contract is unchanged.** Commands, flags, stdout and stderr shapes,
+  and exit codes are exactly as before; the same golden tests assert them at the
+  same boundary. An embedder gets the CLI's behavior without shelling out: the
+  result types marshal to byte-for-byte the JSON the binary prints, and failures
+  carry the same `core.Category` from which the CLI derives its exit codes.
+
+  The Go API is pre-1.0 and may change in a minor release, with any such change
+  noted here; the JSON output contract remains versioned independently by
+  `schema_version`. See [docs/library.md](docs/library.md) for the use-case table,
+  the error model, implementing a custom store, and embedding the daemon.
 - **`schema` now emits the full tool-level self-description**, adopting
   [ADR 0005](docs/adr/0005-output-contract.md). Bare `feedwatch schema` gains
   `tool`, `version`, a tool-level `exit_codes` array (the sorted union of every

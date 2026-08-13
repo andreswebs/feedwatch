@@ -10,8 +10,31 @@ import (
 
 	cliv3 "github.com/urfave/cli/v3"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
+	"github.com/andreswebs/feedwatch/store"
 )
+
+// storeOpts injects a store double into the App an action builds. It is the
+// sanctioned seam of ADR 0007: a test wires a collaborator through the same
+// public option an embedder would use, not through a private field.
+func storeOpts(st store.Store) []feedwatch.Option {
+	return []feedwatch.Option{feedwatch.WithStore(st)}
+}
+
+// netOpts injects the store plus the network collaborators, for the actions that
+// fetch and parse. A nil fetcher or parser is omitted, so the App builds the
+// production one for that port.
+func netOpts(st store.Store, f feedwatch.Fetcher, p feedwatch.Parser) []feedwatch.Option {
+	opts := storeOpts(st)
+	if f != nil {
+		opts = append(opts, feedwatch.WithFetcher(f))
+	}
+	if p != nil {
+		opts = append(opts, feedwatch.WithParser(p))
+	}
+	return opts
+}
 
 // runResult captures everything an agent (or test) observes from one invocation:
 // the stdout and stderr text and the exit code Run returned.
@@ -370,31 +393,6 @@ func TestCompletionKnownShellEmitsScript(t *testing.T) {
 	if res.out == "" {
 		t.Errorf("stdout is empty, want a completion script")
 	}
-}
-
-func TestResolveStorePath(t *testing.T) {
-	t.Run("explicit value passes through", func(t *testing.T) {
-		const dsn = "postgres://user@host/feedwatch"
-		got, isDefault := resolveStorePath(dsn)
-		if got != dsn {
-			t.Errorf("resolveStorePath(%q) = %q, want unchanged", dsn, got)
-		}
-		if isDefault {
-			t.Errorf("resolveStorePath(%q) reported default, want explicit", dsn)
-		}
-	})
-
-	t.Run("XDG_STATE_HOME default", func(t *testing.T) {
-		t.Setenv("XDG_STATE_HOME", "/xdg/state")
-		want := filepath.Join("/xdg/state", "feedwatch", "feedwatch.db")
-		got, isDefault := resolveStorePath("")
-		if got != want {
-			t.Errorf("resolveStorePath(\"\") = %q, want %q", got, want)
-		}
-		if !isDefault {
-			t.Errorf("resolveStorePath(\"\") did not report default, want default")
-		}
-	})
 }
 
 // TestDefaultStoreDirAutoCreated covers fee-yigg: on a fresh machine with no

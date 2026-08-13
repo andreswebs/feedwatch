@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/parse"
 )
 

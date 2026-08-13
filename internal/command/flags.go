@@ -8,15 +8,15 @@ import (
 
 	cliv3 "github.com/urfave/cli/v3"
 
-	"github.com/andreswebs/feedwatch/internal/config"
+	"github.com/andreswebs/feedwatch"
 )
 
 // globalFlags returns the flags defined on the root and inherited by every
 // subcommand. A flag's Value supplies the compiled-in default, Sources supply
 // the environment layer, and the command line overrides both, so configuration
-// precedence is flags > environment > defaults. Defaults mirror config.Defaults
+// precedence is flags > environment > defaults. Defaults mirror feedwatch.Defaults
 // and the documented default table.
-func globalFlags(base config.Config) []cliv3.Flag {
+func globalFlags(base feedwatch.Config) []cliv3.Flag {
 	return []cliv3.Flag{
 		&cliv3.StringFlag{
 			Name:    "db",

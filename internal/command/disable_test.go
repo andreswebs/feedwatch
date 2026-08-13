@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runDisable drives the disable command through the root with an injected store
@@ -15,13 +16,13 @@ import (
 func runDisable(t *testing.T, st store.Store, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"disable"}, args...)...)
 }
 
-// disableEnvelope mirrors the stdout DisableResult shape for assertions.
+// disableEnvelope mirrors the stdout feedwatch.DisableResult shape for assertions.
 type disableEnvelope struct {
-	Feed FeedView `json:"feed"`
+	Feed feedwatch.FeedView `json:"feed"`
 }
 
 // TestDisableActiveFeed covers behavior 1: disable on an active feed sets status

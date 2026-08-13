@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runItems drives the items command through the root with an injected store
@@ -17,11 +17,11 @@ import (
 func runItems(t *testing.T, st store.Store, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"items"}, args...)...)
 }
 
-// itemsEnvelope mirrors the stdout ItemsResult shape for assertions.
+// itemsEnvelope mirrors the stdout feedwatch.ItemsResult shape for assertions.
 type itemsEnvelope struct {
 	Items []struct {
 		FeedURL     string     `json:"feed_url"`

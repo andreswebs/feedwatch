@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/output"
 	"github.com/andreswebs/feedwatch/internal/terr"
 )
@@ -72,8 +73,8 @@ func TestEmitErrorSentinelShape(t *testing.T) {
 	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
 		t.Fatalf("output is not valid JSON: %v", err)
 	}
-	if env.SchemaVersion != output.SchemaVersion {
-		t.Errorf("schema_version = %d, want %d", env.SchemaVersion, output.SchemaVersion)
+	if env.SchemaVersion != feedwatch.SchemaVersion {
+		t.Errorf("schema_version = %d, want %d", env.SchemaVersion, feedwatch.SchemaVersion)
 	}
 	if env.OK {
 		t.Errorf("ok = true, want false for an error envelope")

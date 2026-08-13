@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 func tempDB(t *testing.T) string {
@@ -27,9 +28,9 @@ func TestMigrateStatusFreshDB(t *testing.T) {
 		t.Errorf("stderr = %q, want empty", res.err)
 	}
 
-	var st MigrateStatus
+	var st feedwatch.MigrateStatus
 	if err := json.Unmarshal([]byte(res.out), &st); err != nil {
-		t.Fatalf("stdout is not a MigrateStatus object: %v\ngot: %q", err, res.out)
+		t.Fatalf("stdout is not a feedwatch.MigrateStatus object: %v\ngot: %q", err, res.out)
 	}
 	if st.Backend != "sqlite" {
 		t.Errorf("backend = %q, want sqlite", st.Backend)
@@ -57,12 +58,12 @@ func TestMigrateStatusIdempotent(t *testing.T) {
 		}
 	}
 
-	var a, b MigrateStatus
+	var a, b feedwatch.MigrateStatus
 	if err := json.Unmarshal([]byte(first.out), &a); err != nil {
-		t.Fatalf("first status is not a MigrateStatus object: %v\ngot: %q", err, first.out)
+		t.Fatalf("first status is not a feedwatch.MigrateStatus object: %v\ngot: %q", err, first.out)
 	}
 	if err := json.Unmarshal([]byte(second.out), &b); err != nil {
-		t.Fatalf("second status is not a MigrateStatus object: %v\ngot: %q", err, second.out)
+		t.Fatalf("second status is not a feedwatch.MigrateStatus object: %v\ngot: %q", err, second.out)
 	}
 	if b.StoreSchemaVersion != a.StoreSchemaVersion {
 		t.Errorf("schema_version drifted between runs: %d then %d", a.StoreSchemaVersion, b.StoreSchemaVersion)
@@ -105,9 +106,9 @@ func TestMigrateAppliesThenStatusClean(t *testing.T) {
 	if res.code != 0 {
 		t.Errorf("migrate should exit 0, got code %d (stderr: %q)", res.code, res.err)
 	}
-	var applied MigrateApplied
+	var applied feedwatch.MigrateApplied
 	if err := json.Unmarshal([]byte(res.out), &applied); err != nil {
-		t.Fatalf("stdout is not a MigrateApplied object: %v\ngot: %q", err, res.out)
+		t.Fatalf("stdout is not a feedwatch.MigrateApplied object: %v\ngot: %q", err, res.out)
 	}
 	if applied.Applied < 1 {
 		t.Errorf("applied = %d, want >= 1", applied.Applied)
@@ -117,9 +118,9 @@ func TestMigrateAppliesThenStatusClean(t *testing.T) {
 	}
 
 	res = runCLI(t, "1.2.3", "feedwatch", "--db", db, "migrate", "--status")
-	var st MigrateStatus
+	var st feedwatch.MigrateStatus
 	if err := json.Unmarshal([]byte(res.out), &st); err != nil {
-		t.Fatalf("status stdout is not a MigrateStatus object: %v\ngot: %q", err, res.out)
+		t.Fatalf("status stdout is not a feedwatch.MigrateStatus object: %v\ngot: %q", err, res.out)
 	}
 	if st.Pending != 0 {
 		t.Errorf("pending = %d, want 0 after applying", st.Pending)
@@ -130,17 +131,19 @@ func TestMigrateAppliesThenStatusClean(t *testing.T) {
 }
 
 // TestBackendName covers behavior 3: the reported backend is decided by the
-// resolved --db URL scheme.
+// resolved --db URL scheme, with the default location reported as sqlite.
 func TestBackendName(t *testing.T) {
 	cases := map[string]string{
+		"":                                 "sqlite",
 		"/var/lib/feedwatch/feedwatch.db":  "sqlite",
 		"feedwatch.db":                     "sqlite",
 		"postgres://user@host/feedwatch":   "postgres",
 		"postgresql://user@host/feedwatch": "postgres",
 	}
 	for dsn, want := range cases {
-		if got := backendName(dsn); got != want {
-			t.Errorf("backendName(%q) = %q, want %q", dsn, got, want)
+		cfg := feedwatch.Config{Store: dsn}
+		if got := cfg.Backend(); got != want {
+			t.Errorf("Config{Store: %q}.Backend() = %q, want %q", dsn, got, want)
 		}
 	}
 }

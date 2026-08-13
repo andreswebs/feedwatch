@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/opml"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runExport drives the export command through the root with an injected store
@@ -18,7 +17,7 @@ import (
 func runExport(t *testing.T, st store.Store, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: testsupport.FixedClock(pollFixedTime()), Version: "1.2.3", store: st}
+	d := Deps{Clock: testsupport.FixedClock(pollFixedTime()), Version: "1.2.3", opts: storeOpts(st)}
 	return drive(t, d, append([]string{"export"}, args...)...)
 }
 
@@ -31,8 +30,9 @@ func seedFeed(t *testing.T, st store.Store, url, alias string) {
 	}
 }
 
-// TestExportTwoFeedsToStdout covers behavior 1: exporting two subscriptions
-// emits OPML to stdout with two outlines carrying their xmlUrl.
+// TestExportTwoFeedsToStdout covers behavior 1: the document the library
+// produced reaches stdout carrying both subscriptions. Its OPML shape is the
+// library's contract and is asserted there.
 func TestExportTwoFeedsToStdout(t *testing.T) {
 	st := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
 	seedFeed(t, st, "https://a.example/feed.xml", "")
@@ -43,39 +43,10 @@ func TestExportTwoFeedsToStdout(t *testing.T) {
 		t.Fatalf("export should exit 0, got code %d (stderr %q)", res.code, res.err)
 	}
 
-	feeds, _, err := opml.Parse(strings.NewReader(res.out))
-	if err != nil {
-		t.Fatalf("stdout is not valid OPML: %v\ngot: %q", err, res.out)
-	}
-	got := make(map[string]bool, len(feeds))
-	for _, f := range feeds {
-		got[f.XMLURL] = true
-	}
-	if !got["https://a.example/feed.xml"] || !got["https://b.example/feed.xml"] {
-		t.Errorf("exported URLs = %v, want both seeded feeds", got)
-	}
-}
-
-// TestExportAliasPopulatesTitle covers behavior 2: a feed's alias becomes the
-// outline text/title in the emitted OPML.
-func TestExportAliasPopulatesTitle(t *testing.T) {
-	st := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
-	seedFeed(t, st, "https://go.example/feed.xml", "godev")
-
-	res := runExport(t, st)
-	if res.code != 0 {
-		t.Fatalf("export should exit 0, got code %d (stderr %q)", res.code, res.err)
-	}
-
-	feeds, _, err := opml.Parse(strings.NewReader(res.out))
-	if err != nil {
-		t.Fatalf("stdout is not valid OPML: %v\ngot: %q", err, res.out)
-	}
-	if len(feeds) != 1 {
-		t.Fatalf("exported feeds = %d, want 1", len(feeds))
-	}
-	if feeds[0].Title != "godev" {
-		t.Errorf("Title = %q, want the alias godev", feeds[0].Title)
+	for _, want := range []string{"<opml", "https://a.example/feed.xml", "https://b.example/feed.xml"} {
+		if !strings.Contains(res.out, want) {
+			t.Errorf("stdout = %q, want it to carry %q", res.out, want)
+		}
 	}
 }
 
@@ -98,12 +69,8 @@ func TestExportToFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read exported file: %v", err)
 	}
-	feeds, _, err := opml.Parse(strings.NewReader(string(b)))
-	if err != nil {
-		t.Fatalf("exported file is not valid OPML: %v", err)
-	}
-	if len(feeds) != 1 || feeds[0].XMLURL != "https://a.example/feed.xml" {
-		t.Errorf("exported feeds = %+v, want the seeded feed", feeds)
+	if !strings.Contains(string(b), "https://a.example/feed.xml") {
+		t.Errorf("exported file = %q, want it to carry the seeded feed", b)
 	}
 }
 

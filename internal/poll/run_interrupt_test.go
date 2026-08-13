@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -86,7 +85,7 @@ func TestRunInterruptPersistsCompletedFeeds(t *testing.T) {
 	seedFeed(t, base, slow, fixedTime().Add(-time.Hour))
 
 	p := testsupport.NewFakeParser()
-	p.Register(fast, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}}})
+	p.Register(fast, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}}})
 
 	f := &pausingFetcher{
 		fast:    fast,

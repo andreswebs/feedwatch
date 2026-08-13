@@ -6,8 +6,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/command"
-	"github.com/andreswebs/feedwatch/internal/core"
 	"github.com/andreswebs/feedwatch/internal/version"
 )
 

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 func TestIsTransientClassification(t *testing.T) {

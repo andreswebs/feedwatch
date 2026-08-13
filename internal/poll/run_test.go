@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -76,8 +75,8 @@ func TestRunDueFeedsReturnNewItemsInSelectionOrder(t *testing.T) {
 	f.Register(urlB, okResult(urlB))
 
 	p := testsupport.NewFakeParser()
-	p.Register(urlA, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
-	p.Register(urlB, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}}})
+	p.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
+	p.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}}})
 
 	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 	if err != nil {
@@ -111,7 +110,7 @@ func TestRunSkipsFeedsNotYetDue(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(due, okResult(due))
 	p := testsupport.NewFakeParser()
-	p.Register(due, parse.ParsedFeed{Items: []core.Item{{GUID: "d1", Title: "d1"}}})
+	p.Register(due, core.ParsedFeed{Items: []core.Item{{GUID: "d1", Title: "d1"}}})
 
 	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 	if err != nil {
@@ -137,7 +136,7 @@ func TestRunForceIgnoresScheduleAndSkipsNothing(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{{GUID: "x1", Title: "x1"}}})
+	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "x1", Title: "x1"}}})
 
 	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, true)
 	if err != nil {
@@ -160,7 +159,7 @@ func TestRunNamedFeedPolledRegardlessOfScheduleAndSkipsNothing(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{{GUID: "n1", Title: "n1"}}})
+	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "n1", Title: "n1"}}})
 
 	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{url}, false)
 	if err != nil {
@@ -205,7 +204,7 @@ func TestRunPartialFailureExitsThree(t *testing.T) {
 	f.Register(good, okResult(good))
 	f.RegisterError(bad, core.HTTPErr(bad, 500, nil))
 	p := testsupport.NewFakeParser()
-	p.Register(good, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}}})
+	p.Register(good, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}}})
 
 	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 	if err != nil {
@@ -276,7 +275,7 @@ func TestRunSchedulesNextDueByEffectiveInterval(t *testing.T) {
 			f := testsupport.NewFakeFetcher()
 			f.Register(url, okResult(url))
 			p := testsupport.NewFakeParser()
-			p.Register(url, parse.ParsedFeed{TTL: tc.ttl, Items: []core.Item{{GUID: "i1", Title: "i1"}}})
+			p.Register(url, core.ParsedFeed{TTL: tc.ttl, Items: []core.Item{{GUID: "i1", Title: "i1"}}})
 
 			if _, _, err := Run(ctx, runDeps(s, f, p, clk), nil, false); err != nil {
 				t.Fatalf("Run: %v", err)
@@ -308,7 +307,7 @@ func TestRunForceRepollSurfacesNothingNew(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}, {GUID: "g2", Title: "g2"}}})
+	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}, {GUID: "g2", Title: "g2"}}})
 	d := runDeps(s, f, p, clk)
 
 	first, _, err := Run(ctx, d, nil, false)
@@ -344,7 +343,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: true,
 			Body: []byte("body"), MIMEType: "application/rss+xml"})
 		p := testsupport.NewFakeParser()
-		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
 		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 		if err != nil {
@@ -368,7 +367,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: true,
 			Body: []byte("body"), MIMEType: "application/rss+xml"})
 		p := testsupport.NewFakeParser()
-		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
 		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{oldURL}, false)
 		if err != nil {
@@ -388,7 +387,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		f.Register(oldURL, core.FetchResult{Status: 200, FinalURL: newURL, Permanent: false,
 			Body: []byte("body"), MIMEType: "application/rss+xml"})
 		p := testsupport.NewFakeParser()
-		p.Register(oldURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
+		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
 		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 		if err != nil {
@@ -421,8 +420,8 @@ func TestRunMidPersistFailureReturnsPartialResult(t *testing.T) {
 	f.Register(goodURL, okResult(goodURL))
 	f.Register(badURL, okResult(badURL))
 	p := testsupport.NewFakeParser()
-	p.Register(goodURL, parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "good item"}}})
-	p.Register(badURL, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "bad item"}}})
+	p.Register(goodURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "good item"}}})
+	p.Register(badURL, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "bad item"}}})
 
 	d := Deps{
 		Store:            failing,
@@ -479,8 +478,8 @@ func TestRunFetchedAndDedupedCounters(t *testing.T) {
 	f.Register(urlB, okResult(urlB))
 
 	p := testsupport.NewFakeParser()
-	p.Register(urlA, parse.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
-	p.Register(urlB, parse.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}, {GUID: "b2", Title: "b2"}, {GUID: "b3", Title: "b3"}}})
+	p.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
+	p.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}, {GUID: "b2", Title: "b2"}, {GUID: "b3", Title: "b3"}}})
 
 	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
 	if err != nil {
@@ -510,7 +509,7 @@ func TestRunFetchedAndDedupedOnSecondPoll(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+	p.Register(url, core.ParsedFeed{Items: []core.Item{
 		{GUID: "g1", Title: "g1"},
 		{GUID: "g2", Title: "g2"},
 		{GUID: "g3", Title: "g3"},
@@ -574,7 +573,7 @@ func TestRunMixedNewAndKnownItems(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, okResult(url))
 	p := testsupport.NewFakeParser()
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+	p.Register(url, core.ParsedFeed{Items: []core.Item{
 		{GUID: "g1", Title: "g1"},
 		{GUID: "g2", Title: "g2"},
 	}})
@@ -585,7 +584,7 @@ func TestRunMixedNewAndKnownItems(t *testing.T) {
 	}
 
 	// Append one new item and re-poll (force to bypass scheduling).
-	p.Register(url, parse.ParsedFeed{Items: []core.Item{
+	p.Register(url, core.ParsedFeed{Items: []core.Item{
 		{GUID: "g1", Title: "g1"},
 		{GUID: "g2", Title: "g2"},
 		{GUID: "g3", Title: "g3"},

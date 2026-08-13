@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // isTransient reports whether a fetch outcome may succeed on a retry within the

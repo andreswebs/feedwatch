@@ -1,3 +1,5 @@
 ---
 MD013: false # line-length
 MD060: false # table pipe alignment
+MD010: # no-hard-tabs
+  code_blocks: false # Go snippets are copied verbatim from gofmt'd examples

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 func migrateTestNow() time.Time { return time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC) }

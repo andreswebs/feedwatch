@@ -6,10 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // runAdd drives the add command through the root with injected doubles for the
@@ -18,7 +17,7 @@ import (
 func runAdd(t *testing.T, st store.Store, f *testsupport.FakeFetcher, p *testsupport.FakeParser, clk core.Clock, args ...string) runResult {
 	t.Helper()
 
-	d := Deps{Clock: clk, Version: "1.2.3", store: st, fetch: f, parse: p}
+	d := Deps{Clock: clk, Version: "1.2.3", opts: netOpts(st, f, p)}
 	return drive(t, d, append([]string{"add"}, args...)...)
 }
 
@@ -37,7 +36,7 @@ func TestAddValidFeedStoresAndReportsCreated(t *testing.T) {
 	st, fetcher, parser, clk := newPollDoubles(t)
 	feedURL := "https://blog.example/feed.xml"
 	fetcher.Register(feedURL, okResult())
-	parser.Register(feedURL, parse.ParsedFeed{})
+	parser.Register(feedURL, core.ParsedFeed{})
 
 	res := runAdd(t, st, fetcher, parser, clk, feedURL)
 
@@ -138,7 +137,7 @@ func TestAddExistingURLUpdatesIdempotently(t *testing.T) {
 	st, fetcher, parser, clk := newPollDoubles(t)
 	feedURL := "https://blog.example/feed.xml"
 	fetcher.Register(feedURL, okResult())
-	parser.Register(feedURL, parse.ParsedFeed{})
+	parser.Register(feedURL, core.ParsedFeed{})
 
 	if _, err := st.AddFeed(context.Background(), core.Feed{URL: feedURL, Status: core.FeedActive}); err != nil {
 		t.Fatalf("seed AddFeed: %v", err)

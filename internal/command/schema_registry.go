@@ -3,6 +3,7 @@ package command
 import (
 	"encoding/json"
 
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/jsonschema"
 )
 
@@ -79,18 +80,18 @@ func checkExitCodes() map[string]string {
 // from what the command returns. Two outputs are not plain objects: migrate has
 // two shapes (oneOf) and export/schema are non-object scalars.
 var schemaRegistry = map[string]cmdMeta{
-	"migrate":  {exitCodes: defaultExitCodes(), output: jsonschema.OneOf(jsonschema.Reflect(MigrateApplied{}), jsonschema.Reflect(MigrateStatus{}))},
-	"poll":     {exitCodes: pollExitCodes(), output: jsonschema.Reflect(PollResult{})},
-	"check":    {exitCodes: checkExitCodes(), output: jsonschema.Reflect(CheckResult{})},
-	"add":      {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(AddResult{})},
-	"list":     {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(ListResult{})},
-	"rm":       {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(RmResult{})},
-	"enable":   {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(EnableResult{})},
-	"disable":  {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(DisableResult{})},
-	"items":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(ItemsResult{})},
-	"prune":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(PruneResult{})},
-	"discover": {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(DiscoverResult{})},
-	"import":   {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(ImportResult{})},
+	"migrate":  {exitCodes: defaultExitCodes(), output: jsonschema.OneOf(jsonschema.Reflect(feedwatch.MigrateApplied{}), jsonschema.Reflect(feedwatch.MigrateStatus{}))},
+	"poll":     {exitCodes: pollExitCodes(), output: jsonschema.Reflect(feedwatch.PollResult{})},
+	"check":    {exitCodes: checkExitCodes(), output: jsonschema.Reflect(feedwatch.CheckResult{})},
+	"add":      {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.AddResult{})},
+	"list":     {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.ListResult{})},
+	"rm":       {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.RmResult{})},
+	"enable":   {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.EnableResult{})},
+	"disable":  {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.DisableResult{})},
+	"items":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.ItemsResult{})},
+	"prune":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.PruneResult{})},
+	"discover": {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.DiscoverResult{})},
+	"import":   {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.ImportResult{})},
 	"export":   {exitCodes: defaultExitCodes(), output: jsonschema.Scalar("string", "OPML 2.0 XML document written to the output file or stdout; not a JSON envelope")},
 	// schema stays a described Scalar rather than a reflected projection: the
 	// SchemaResult and Schema structs carry a json.RawMessage output_schema field,

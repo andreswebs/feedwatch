@@ -10,11 +10,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/fetch"
-	"github.com/andreswebs/feedwatch/internal/parse"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // importEnvelope mirrors the stdout ImportResult shape for assertions.
@@ -38,15 +37,13 @@ func runImport(t *testing.T, st store.Store, in *os.File, args ...string) runRes
 
 // runImportWith is runImport with explicit fetcher and parser doubles, for
 // exercising the default validating path without touching the network.
-func runImportWith(t *testing.T, st store.Store, fetcher fetch.Fetcher, parser parse.Parser, in *os.File, args ...string) runResult {
+func runImportWith(t *testing.T, st store.Store, fetcher feedwatch.Fetcher, parser feedwatch.Parser, in *os.File, args ...string) runResult {
 	t.Helper()
 
 	d := Deps{
 		Clock:   testsupport.FixedClock(pollFixedTime()),
 		Version: "1.2.3",
-		store:   st,
-		fetch:   fetcher,
-		parse:   parser,
+		opts:    netOpts(st, fetcher, parser),
 		In:      in,
 	}
 	return drive(t, d, append([]string{"import"}, args...)...)
@@ -283,7 +280,7 @@ func TestImportValidatesByDefault(t *testing.T) {
 	ff.Register("https://html.example/page", core.FetchResult{Body: []byte("<html></html>")})
 
 	fp := testsupport.NewFakeParser()
-	fp.Register("https://good.example/feed.xml", parse.ParsedFeed{Title: "Good"})
+	fp.Register("https://good.example/feed.xml", core.ParsedFeed{Title: "Good"})
 	fp.RegisterError("https://html.example/page",
 		core.ParseErr("https://html.example/page", errors.New("not a feed")))
 
@@ -417,7 +414,7 @@ func TestImportValidatesConcurrently(t *testing.T) {
 	gf := newGateFetcher(len(urls))
 	fp := testsupport.NewFakeParser()
 	for _, u := range urls {
-		fp.Register(u, parse.ParsedFeed{})
+		fp.Register(u, core.ParsedFeed{})
 	}
 	fp.RegisterError("https://three.example/feed.xml", core.ParseErr("https://three.example/feed.xml", errors.New("not a feed")))
 

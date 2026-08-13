@@ -12,7 +12,7 @@ import (
 
 	cliv3 "github.com/urfave/cli/v3"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // TestRunSignalOverridesExitCode covers TDD behavior 6: a caught SIGINT or

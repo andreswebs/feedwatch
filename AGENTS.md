@@ -1,8 +1,10 @@
 # AGENTS.md
 
-feedwatch is an agent-first command-line tool for watching RSS and Atom feeds:
-it fetches, parses, normalizes, stores, deduplicates, and queries feed content,
-leaving all content intelligence to the calling agent.
+feedwatch is an agent-first Go library for watching RSS and Atom feeds, with a
+command-line frontend over it: it fetches, parses, normalizes, stores,
+deduplicates, and queries feed content, leaving all content intelligence to the
+calling agent. The library is the substance and the CLI is one frontend
+([ADR 0007](docs/adr/0007-library-and-frontends.md)).
 
 ## Essentials
 
@@ -26,6 +28,7 @@ Load these on demand for the task at hand:
 | Design rationale and architecture      | [docs/cli-design.md](docs/cli-design.md)     |
 | Functional requirements (EARS)         | [docs/specs/001-initial-implementation/requirements.md](docs/specs/001-initial-implementation/requirements.md) |
 | CLI usage reference (commands, flags)  | [docs/usage.md](docs/usage.md)               |
+| Embedding the library (public API)     | [docs/library.md](docs/library.md)           |
 | Manual QA plan (full CLI surface)      | [docs/specs/001-initial-implementation/manual-qa.md](docs/specs/001-initial-implementation/manual-qa.md)       |
 | Implementation learnings, newest last  | [docs/specs/001-initial-implementation/learnings.md](docs/specs/001-initial-implementation/learnings.md)       |
 

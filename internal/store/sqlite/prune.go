@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // PruneItems trims stored history per the policy, tombstoning matched rows and

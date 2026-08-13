@@ -3,7 +3,7 @@ package fetch
 import (
 	"context"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // Fetcher retrieves a single feed over HTTP, honoring conditional-GET

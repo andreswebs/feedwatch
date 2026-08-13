@@ -6,8 +6,8 @@ import (
 
 	cliv3 "github.com/urfave/cli/v3"
 
-	"github.com/andreswebs/feedwatch/internal/config"
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/output"
 )
 
@@ -52,7 +52,7 @@ func runCustom(ctx context.Context, args []string, deps Deps, customize func(*cl
 // exiter and no version printer global; --version is a plain flag handled in
 // Before (see version.go).
 func newRoot(d Deps, cbErr *error) *cliv3.Command {
-	flags := globalFlags(config.Defaults())
+	flags := globalFlags(feedwatch.Defaults())
 	flags = append(flags, &cliv3.BoolFlag{
 		Name:    "version",
 		Aliases: []string{"v"},
@@ -126,14 +126,9 @@ func (d Deps) before() cliv3.BeforeFunc {
 			return ctx, exitError{code: 0}
 		}
 
-		cfg, isDefault := buildConfig(config.Defaults(), cmd)
+		cfg := buildConfig(feedwatch.Defaults(), cmd)
 		if err := cfg.Validate(); err != nil {
 			return ctx, err
-		}
-		if isDefault && backendName(cfg.Store) == "sqlite" {
-			if err := ensureStoreDir(cfg.Store); err != nil {
-				return ctx, err
-			}
 		}
 
 		logger := NewLogger(d.Err, cfg.Format, cfg.LogLevel, cfg.Quiet)
@@ -148,11 +143,12 @@ func (d Deps) before() cliv3.BeforeFunc {
 
 // buildConfig overlays the resolved flag values (already merged with environment
 // and defaults by the framework) onto the base configuration. Fields without a
-// global flag keep their base values.
-func buildConfig(base config.Config, cmd *cliv3.Command) (config.Config, bool) {
+// global flag keep their base values. The --db value passes through verbatim,
+// empty included: an empty Store means "the tool-owned default location", which
+// the library resolves and provisions when the store is first opened.
+func buildConfig(base feedwatch.Config, cmd *cliv3.Command) feedwatch.Config {
 	c := base
-	store, isDefault := resolveStorePath(cmd.String("db"))
-	c.Store = store
+	c.Store = cmd.String("db")
 	c.UserAgent = cmd.String("user-agent")
 	c.Concurrency = cmd.Int("concurrency")
 	c.ConnectTimeout = cmd.Duration("connect-timeout")
@@ -165,7 +161,7 @@ func buildConfig(base config.Config, cmd *cliv3.Command) (config.Config, bool) {
 	c.NoColor = cmd.Bool("no-color")
 	c.LogLevel = parseLevel(cmd.String("log-level"))
 	c.Quiet = cmd.Bool("quiet")
-	return c, isDefault
+	return c
 }
 
 // rootAction handles invocations that resolve to no subcommand: a leftover

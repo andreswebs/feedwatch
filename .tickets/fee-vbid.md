@@ -1,6 +1,6 @@
 ---
 id: fee-vbid
-status: open
+status: closed
 deps: [fee-kj8z]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -162,3 +162,18 @@ daemon/options.go      (new)
 daemon/doc.go          (new)
 daemon/daemon_test.go  (new, package daemon_test)
 ```
+
+## Notes
+
+**2026-08-13T15:38:25Z**
+
+Added the public daemon package: Scheduler, New, Run, Events, Event, and the four options (WithInterval, WithClock, WithTicks, WithPollOnStart), plus doc.go stating the wake-cadence, drop-on-overlap, and blocking-publish policies.
+
+Implementation notes for the next person:
+- pollOnce runs App.Poll on its own goroutine (result on a buffered channel, so it always exits) while the loop keeps receiving and discarding ticks. That is what makes drop-on-overlap real: an inline poll cannot drop a tick, because an unbuffered caller channel blocks the sender and time.Ticker's cap-1 buffer queues one stale tick.
+- The scheduler polls with an empty PollRequest (Force false), so per-feed due-ness, politeness, and backoff stay with the store. Pinned by the skipped-count test.
+- Run is single-use: the CompareAndSwap guard is never reset, since Run closes Events, so a re-run returns ErrAlreadyRunning (exported) rather than panicking on a closed channel.
+- Publishing is a blocking send that also selects on ctx.Done(); on cancellation the final (possibly partial) event is offered non-blockingly, then the channel is closed and ctx.Err() returned.
+- Nine test slices cover the ticket's TDD list; no test sleeps. The error path is driven by a store.Store wrapper whose first DueFeeds call fails (a fetch failure is result data, not Event.Err).
+- The root package does not import daemon (verified by grep); make build and make test-race pass, the daemon package also under -race -count=3.
+- Still open in fee-3p3r: public API docs and runnable examples, which is where a daemon example belongs.

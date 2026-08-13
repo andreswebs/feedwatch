@@ -1,6 +1,6 @@
 ---
 id: fee-rzwl
-status: open
+status: closed
 deps: [fee-f3u8]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -310,3 +310,17 @@ internal/command/list.go, rm.go, enable.go, disable.go, prune.go,
 internal/command/schema_registry.go                                    (imports the library result types)
 internal/command/app.go                                                (new: Deps.app helper)
 ```
+
+## Notes
+
+**2026-08-13T14:52:53Z**
+
+Done. The seven store-only use cases now live in the root feedwatch package (list.go, rm.go, enable.go, disable.go, prune.go, items.go, migrate.go), each with its request type, its result envelope, its MarshalJSON/RenderText, and its Validate. suggest.go and suggest_test.go moved across whole.
+
+App gained List, Remove, Enable, Disable, Prune, Items, Migrate, and MigrationStatus. app.go grew three seams for migrate: storeLocked (open without migrating), resolveStoreUnmigrated, and markMigrated, so Migrate reports a truthful applied count while the other seven keep the apply-once-per-App guard.
+
+CLI side: internal/command/app.go adds Deps.app(ctx), which maps the unexported store/fetch/parse test seams onto WithStore/WithFetcher/WithParser plus WithClock. Each of the seven actions is now flag decoding, one App call, and rendering; itemsAction keeps the omitted_no_date info log and calls req.Envelope(res) for the projected-versus-full choice. buildItemQuery, parseItemOrder, parseTimeRef, parseRelativeDuration, buildPrunePolicy, unknownFieldMessage, and usageErr are gone from internal/command. openStore/openStoreMigrated lost their now-unused backend return.
+
+Verification: make build passes, and every internal/command/testdata/** golden compared byte-identical with no -update run. The emitted output_schema is unchanged for all seven commands (jsonschema.Reflect is purely structural), including the migrate oneOf.
+
+For the next person: dashIfEmpty is temporarily duplicated in internal/command/discover.go because discover still renders its own table; delete that copy when discover moves in fee-kj8z. resolve.go and the unexported Deps fields stay until fee-gvuo, as planned. New library tests live in list_test.go, rm_test.go, enable_test.go, disable_test.go, prune_test.go, items_test.go, migrate_test.go, with shared helpers in testapp_test.go.

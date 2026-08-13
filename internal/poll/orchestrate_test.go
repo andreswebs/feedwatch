@@ -5,8 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
@@ -40,8 +39,8 @@ func TestOrchestrateTwoFeeds(t *testing.T) {
 	fetcher.Register(urlB, core.FetchResult{Status: 200, Body: []byte("b"), MIMEType: "application/rss+xml"})
 
 	parser := testsupport.NewFakeParser()
-	parser.Register(urlA, parse.ParsedFeed{Items: []core.Item{{Title: "a1"}}})
-	parser.Register(urlB, parse.ParsedFeed{Items: []core.Item{{Title: "b1"}}})
+	parser.Register(urlA, core.ParsedFeed{Items: []core.Item{{Title: "a1"}}})
+	parser.Register(urlB, core.ParsedFeed{Items: []core.Item{{Title: "b1"}}})
 
 	d := Deps{Store: store, Fetcher: fetcher, Parser: parser, Clock: clk, Concurrency: 8}
 
@@ -77,7 +76,7 @@ func TestOrchestrateOneFailureDoesNotCancelSiblings(t *testing.T) {
 	fetcher.Register(good, core.FetchResult{Status: 200, Body: []byte("g"), MIMEType: "application/rss+xml"})
 
 	parser := testsupport.NewFakeParser()
-	parser.Register(good, parse.ParsedFeed{Items: []core.Item{{Title: "g1"}}})
+	parser.Register(good, core.ParsedFeed{Items: []core.Item{{Title: "g1"}}})
 
 	d := Deps{Store: store, Fetcher: fetcher, Parser: parser, Clock: clk, Concurrency: 8}
 

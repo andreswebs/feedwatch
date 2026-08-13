@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 
+	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/internal/terr"
 )
 
@@ -22,23 +23,6 @@ func ExitCodeFor(err error) int {
 	}
 	return 70
 }
-
-// SchemaVersion is the version of the output contract, bumped on breaking
-// shape changes to any result envelope (docs/adr/0005-output-contract.md).
-const SchemaVersion = 1
-
-// Head opens every result envelope: schema_version identifies the output
-// contract version and ok reports whether the invocation succeeded. Embed it as
-// the first field of each command's envelope struct so the two keys lead every
-// result on stdout.
-type Head struct {
-	SchemaVersion int  `json:"schema_version"`
-	OK            bool `json:"ok"`
-}
-
-// OKHead returns the head for a successful result: the current schema version
-// and ok true.
-func OKHead() Head { return Head{SchemaVersion: SchemaVersion, OK: true} }
 
 // WriteJSON writes v as compact, newline-terminated JSON to w. It is the single
 // stdout writer for every command's result envelope; the trailing newline keeps
@@ -76,7 +60,7 @@ type errorDetail struct {
 // escalated over the error it describes.
 func EmitError(w io.Writer, err error) {
 	env := errorEnvelope{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: feedwatch.SchemaVersion,
 		Error:         errorDetail{Code: "internal_error", Message: errorMessage(err)},
 	}
 
@@ -121,7 +105,7 @@ type warningEnvelope struct {
 // since it never changes the outcome it advises about.
 func EmitWarning(w io.Writer, code, message, hint string, details any) {
 	env := warningEnvelope{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: feedwatch.SchemaVersion,
 		Level:         "warning",
 		Code:          code,
 		Message:       message,

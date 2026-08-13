@@ -3,7 +3,7 @@ package poll
 import (
 	"context"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // selectFeeds resolves the feeds a poll run should target. Named refs are

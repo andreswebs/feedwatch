@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/store"
+	"github.com/andreswebs/feedwatch/core"
+	"github.com/andreswebs/feedwatch/store"
 )
 
 // FailingUpsertStore wraps a store.Store and forces UpsertItems to fail for a

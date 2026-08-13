@@ -1,6 +1,6 @@
 ---
 id: fee-ui25
-status: open
+status: closed
 deps: [fee-3p3r]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -79,3 +79,21 @@ frontend wires its own commands.
 - Every `internal/command/testdata/**` golden compares byte-identical with no
   `-update` run.
 - `make build` and `make test-race` pass.
+
+## Notes
+
+**2026-08-13T15:53:34Z**
+
+Epic closed. Verified all five acceptance criteria against the working tree:
+
+1. All nine children closed.
+2. Public surface is exactly the four documented packages: 'go list' shows feedwatch, feedwatch/core, feedwatch/store, feedwatch/daemon as the only non-internal importable packages (cmd/feedwatch and cmd/qafixtures are package main). Surface spot-checked with 'go doc -short': App + New + Option (WithStore/WithFetcher/WithParser/WithClock/WithWarner) + Config + the request/result types at the root, Store alone in store, Scheduler in daemon.
+3. internal/command holds no domain logic. Its only internal imports are output, terr, and jsonschema; resolve.go, storeopen.go, and storepath.go are gone, and every action is now app() + bind() + one App call + render. The ban is enforced as a test by TestTheCLIHoldsNoDomainCollaborators in the module-root imports_test.go.
+4. No tracked internal/command/testdata golden is modified and no -update run was needed; the two untracked testdata dirs (help/, schema/) are new golden sets added by children, not moved ones.
+5. make build and make test-race both pass.
+
+One gap closed as epic work: ADR 0007 calls the request-surface table test mandatory because it must walk EVERY request type in the library, but TestRequestSurfaceMapping walked a hand-maintained list of 12. That is satisfied in letter, not in effect: declaring a request type is what admits an unmapped field type, so the failure must land when the type is added, not when a frontend first wires it and panics at command-tree construction. Added TestRequestSurfaceCoverage (internal/command/reflectflags_test.go), which parses the library's own source with go/ast for exported *Request types and requires each to appear in the shared requestSurfaceCases table. The table was extracted into that function so the mapping test and the coverage test share one source of truth.
+
+For the next person: the coverage guard was verified sensitive by deleting the prune row and confirming it failed naming feedwatch.PruneRequest, then restoring it. It uses glob + parser.ParseFile, not parser.ParseDir, which staticcheck rejects as deprecated (SA1019). It also fails when the walk finds no types, so it cannot pass vacuously. Adding a use case now means adding a row to requestSurfaceCases; the guard tells you so by name.
+
+The deliberately deferred item stays deferred: no framework-agnostic command registry. Per the ADR it waits for a second frontend, since its requirements cannot be known before there is a second projection to generalize from.

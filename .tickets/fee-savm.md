@@ -1,6 +1,6 @@
 ---
 id: fee-savm
-status: open
+status: closed
 deps: [fee-gvuo]
 links: []
 created: 2026-08-13T14:03:47Z
@@ -225,3 +225,19 @@ internal/command/*.go                   (command definitions derive flags; actio
 items.go, poll.go, check.go, add.go, discover.go, rm.go, enable.go,
     disable.go, prune.go, list.go, import.go, export.go   (root package: tags on request types)
 ```
+
+## Notes
+
+**2026-08-13T15:26:49Z**
+
+Done. internal/command/reflectflags.go provides flagsFor/argsFor/bind over a single flagKinds table mapping reflect.Type -> {newFlag, bind}, so construction and binding cannot drift. Supported types: string, bool, int, *int, time.Duration, []string. Tags: flag ("-" excludes), arg, alias, default, usage, variadic. All twelve request types carry tags; no validation tag exists. Two panics at command-tree construction: an unmapped field type, and a field carrying neither flag nor arg (a new field cannot silently have no CLI surface).
+
+Hand-kept by design: --no-validate and the file argument on import (ImportRequest.OPML is bytes, not a path; negation in a tag would start a mini-language), -o on export (an output destination, not a request field), --status on migrate (no request type at all), and global flags in flags.go (they map to Config). --fields keeps a CLI-side usage override via withUsage, because its text enumerates core.ItemFieldNames() and a struct tag is a compile-time constant.
+
+DEVIATION worth reading: schema output is byte-identical for every flag on every command, but NOT for the args array of poll and check. Both accepted trailing feed refs through urfave's implicit positional tail while declaring no Arguments, so 'schema poll' reported args:[] even though ArgsUsage said [FEED...] and docs/cli-design.md line 179 documented args:[{name:feed,variadic:true}]. Declaring the variadic argument (as this ticket's design mandates) fixes that drift; the design doc was right and the implementation was wrong. Those two fixtures were regenerated deliberately, docs/usage.md line 488 was corrected to match, and nothing else changed. All pre-existing internal/command/testdata/** goldens compared byte-identical with no -update run.
+
+Note for the next person: a variadic StringArgs needs Max: -1 or the framework refuses to parse it, and declaring one moves values from cmd.Args().Slice() to cmd.StringArgs(name).
+
+New fixtures: testdata/schema/*.stdout pins the machine-readable input surface, testdata/help/*.stdout pins the usage strings (FlagSchema carries no usage, so schema alone would not catch a mangled usage tag). The bare-schema golden normalizes the errors array to a token: TestSchemaNewSentinelAppears registers a test-only sentinel into the process-global terr registry and cannot unregister it, so that array is not stable across a package run.
+
+make build and make test-race pass.

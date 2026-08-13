@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // InMemoryStore is a map-backed store.Store double for fast unit tests of

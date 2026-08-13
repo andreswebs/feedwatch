@@ -5,7 +5,7 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // FakeFetcher is a programmable fetch.Fetcher double. It returns a canned

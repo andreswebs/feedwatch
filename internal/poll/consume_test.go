@@ -6,8 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
-	"github.com/andreswebs/feedwatch/internal/parse"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/store/sqlite"
 )
 
@@ -62,7 +61,7 @@ func TestConsumeReturnsNewItemsThenDedups(t *testing.T) {
 		{GUID: "g1", Title: "First", Link: "https://blog.example/1"},
 		{GUID: "g2", Title: "Second", Link: "https://blog.example/2"},
 	}
-	oc := feedOutcome{feed: feed, result: core.FetchResult{Status: 200}, parsed: parse.ParsedFeed{Items: items}}
+	oc := feedOutcome{feed: feed, result: core.FetchResult{Status: 200}, parsed: core.ParsedFeed{Items: items}}
 
 	totals, feedErrs, err := consume(ctx, consumeDeps(s), []feedOutcome{oc})
 	if err != nil {
@@ -144,7 +143,7 @@ func TestConsumeRecordSuccessHonorsTTL(t *testing.T) {
 	feed := addFeed(t, s, core.Feed{URL: url})
 
 	const ttl = 15 * time.Minute
-	oc := feedOutcome{feed: feed, result: core.FetchResult{Status: 200}, parsed: parse.ParsedFeed{TTL: ttl}}
+	oc := feedOutcome{feed: feed, result: core.FetchResult{Status: 200}, parsed: core.ParsedFeed{TTL: ttl}}
 	if _, _, err := consume(ctx, consumeDeps(s), []feedOutcome{oc}); err != nil {
 		t.Fatalf("consume: %v", err)
 	}
@@ -209,7 +208,7 @@ func TestConsumeAssignsDedupKeysBeforeUpsert(t *testing.T) {
 	feed := addFeed(t, s, core.Feed{URL: url})
 
 	first := feedOutcome{feed: feed, result: core.FetchResult{Status: 200},
-		parsed: parse.ParsedFeed{Items: []core.Item{{GUID: "stable", Title: "v1", Link: "https://blog.example/v1"}}}}
+		parsed: core.ParsedFeed{Items: []core.Item{{GUID: "stable", Title: "v1", Link: "https://blog.example/v1"}}}}
 	totals, _, err := consume(ctx, consumeDeps(s), []feedOutcome{first})
 	if err != nil {
 		t.Fatalf("consume: %v", err)
@@ -220,7 +219,7 @@ func TestConsumeAssignsDedupKeysBeforeUpsert(t *testing.T) {
 
 	// Same GUID, changed title and link: keyed on GUID, so not new.
 	second := feedOutcome{feed: feed, result: core.FetchResult{Status: 200},
-		parsed: parse.ParsedFeed{Items: []core.Item{{GUID: "stable", Title: "v2", Link: "https://blog.example/v2"}}}}
+		parsed: core.ParsedFeed{Items: []core.Item{{GUID: "stable", Title: "v2", Link: "https://blog.example/v2"}}}}
 	totals2, _, err := consume(ctx, consumeDeps(s), []feedOutcome{second})
 	if err != nil {
 		t.Fatalf("consume (second): %v", err)
@@ -268,7 +267,7 @@ func TestConsumeRewritesURLOnPermanentRedirect(t *testing.T) {
 			oc := feedOutcome{
 				feed:   feed,
 				result: tc.result,
-				parsed: parse.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "First"}}},
+				parsed: core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "First"}}},
 			}
 
 			if _, _, err := consume(ctx, consumeDeps(s), []feedOutcome{oc}); err != nil {

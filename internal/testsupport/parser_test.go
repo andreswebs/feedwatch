@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andreswebs/feedwatch/internal/core"
+	"github.com/andreswebs/feedwatch/core"
 	"github.com/andreswebs/feedwatch/internal/parse"
 	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
@@ -17,7 +17,7 @@ var _ parse.Parser = (*testsupport.FakeParser)(nil)
 func TestFakeParserReturnsCannedFeedForRegisteredBaseURL(t *testing.T) {
 	const base = "https://blog.example/feed.xml"
 	p := testsupport.NewFakeParser()
-	want := parse.ParsedFeed{
+	want := core.ParsedFeed{
 		TTL:   45 * time.Minute,
 		Items: []core.Item{{Title: "First", Link: "https://blog.example/first"}},
 	}
