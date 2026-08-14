@@ -1,6 +1,6 @@
 ---
 id: fee-zs6b
-status: open
+status: closed
 deps: [fee-zt9x, fee-c6fa, fee-pfpz, fee-2lbg, fee-o5uq, fee-9ajb, fee-7pg3, fee-47yv, fee-frus, fee-5wk4, fee-0fcw, fee-7emy, fee-igmb, fee-93m0, fee-fxl2]
 links: []
 created: 2026-08-14T02:40:46Z
@@ -114,3 +114,23 @@ command without `--tag` behaves exactly as before on a store with no tags.
 - `feedwatch.SchemaVersion` is still 1, and `CHANGELOG.md` states both the
   `rm` break and why the head did not move.
 - A binary built before migration 0002 exits 65 against a migrated store.
+
+## Notes
+
+**2026-08-14T21:21:50Z**
+
+Epic gate closed after verifying integration on a native binary from make build (no new code, per the ticket's closing procedure).
+
+Verified:
+- migrate --status reports store_schema_version 2, pending 0; idempotent on re-run.
+- Full smoke sequence from the design section ran end to end: add --tag, tag, tags, list --tag, poll --force --tag, items --tag, export --tag (outline carries category="agents,ai"), and poll --tag REF exits 64.
+- Legacy-store path: built a pre-0002 binary from a temp copy of the tree with the migration file removed, then downgraded a real store with sqlite3 (ALTER TABLE feeds DROP COLUMN tags; DELETE FROM schema_migrations WHERE version=2) to get a genuine v1 store holding one feed and three items. The current binary migrated it in place: pre-existing feed reports "tags":[], items survived, tags reports [].
+- Too-new guard: the pre-0002 binary against the migrated store emits code schema_too_new and exits 65.
+- Untagged paths unchanged: poll, check, prune, export (no category attribute emitted when a feed has no tags), and rm REF, which now reports removed as a one-element array.
+- Lane semantics: --match all vs any differ as specified, --match bogus exits 64, rm --tag ai removes both feeds in the lane and returns a sorted URL array, prune --tag scopes to the lane, items --tag scopes correctly on both the published and fetched axes.
+- Tag validation: empty and whitespace-bearing tags exit 64; a comma in a CLI value is consumed by the urfave slice flag as a separator (--add "a,b" yields tags a and b, exit 0), which matches the settled decision that the spelling carries no semantics; the comma rejection in core.ValidateTags guards the library API.
+- Canonicalization confirmed end to end: --add ZED --add zed --add Alpha yields [alpha, zed] added and a lowercased, deduped, sorted set.
+- daemon.WithTags and daemon.WithMatch feed PollRequest{Tags, Match}; the daemon is library-only, there is no daemon CLI command.
+- feedwatch.SchemaVersion is still 1 (envelope.go); CHANGELOG.md documents the rm break, the held head, and the store.Store.DueFeeds signature change.
+
+make build is green. The feature is entirely uncommitted in the working tree; committing is left to the user.

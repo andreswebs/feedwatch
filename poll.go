@@ -11,16 +11,34 @@ import (
 // PollRequest selects the feeds to poll. An empty Feeds polls the feeds whose
 // interval has elapsed; naming feeds polls exactly those, by URL or alias,
 // regardless of schedule. Force polls every active feed, ignoring the schedule.
+// Tags narrows the selection to a lane: it restricts the due feeds on their own
+// cadence, or the active feeds under Force, so a lane is pollable from a timer
+// without implying Force.
 type PollRequest struct {
 	Feeds []string `arg:"feed" variadic:"true"`
 	Force bool     `flag:"force" alias:"all" usage:"poll every active feed, ignoring the schedule"`
+	Tags  []string `flag:"tag" usage:"poll only feeds carrying this tag (repeatable); cannot be combined with named feeds"`
+	Match string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
 }
 
-// Validate reports whether the request is usable. Every field is optional, so it
-// always succeeds; the method exists so every request type is validated
-// uniformly by a frontend. An unknown feed reference is a store-resolution
-// failure rather than a syntactic one, so it surfaces from Poll.
-func (r PollRequest) Validate() error { return nil }
+// Validate reports whether the request is usable. Naming feeds and naming a lane
+// are two different selections, so combining them is rejected rather than
+// silently resolved in favor of one. An unknown feed reference is a
+// store-resolution failure rather than a syntactic one, so it surfaces from Poll.
+func (r PollRequest) Validate() error {
+	_, err := r.filter()
+	return err
+}
+
+// filter resolves the request into the store filter that narrows the selection,
+// so Validate and Poll state the rules once and cannot drift.
+func (r PollRequest) filter() (core.ListFilter, error) {
+	if len(r.Tags) > 0 && len(r.Feeds) > 0 {
+		return core.ListFilter{}, usageErr("--tag cannot be combined with named feeds; " +
+			"name feeds to poll exactly those, or use --tag to poll a lane")
+	}
+	return tagFilter(r.Tags, r.Match)
+}
 
 // PollFailure is one failed feed in the poll envelope: the feed URL, its error
 // category, the HTTP status when the category is http (omitted otherwise), and
@@ -98,7 +116,8 @@ func (r PollResult) ExitCode() int {
 // early (an unreachable store, an unresolvable feed reference) and nothing was
 // done, so the result must not be rendered.
 func (a *App) Poll(ctx context.Context, req PollRequest) (PollResult, error) {
-	if err := req.Validate(); err != nil {
+	filter, err := req.filter()
+	if err != nil {
 		return PollResult{}, err
 	}
 	st, err := a.resolveStore(ctx)
@@ -123,7 +142,7 @@ func (a *App) Poll(ctx context.Context, req PollRequest) (PollResult, error) {
 		Warn:             a.warnf,
 	}
 
-	result, feedErrs, err := poll.Run(ctx, deps, req.Feeds, req.Force)
+	result, feedErrs, err := poll.Run(ctx, deps, req.Feeds, req.Force, filter)
 	if err != nil && result.Polled == 0 {
 		// Nothing was persisted, so there is no truthful envelope to hand back.
 		return PollResult{}, err

@@ -65,7 +65,10 @@ func (s *InMemoryStore) resolveLocked(ref string) (string, bool) {
 }
 
 // AddFeed upserts a subscription keyed by URL. An alias bound to a different URL
-// is a usage error.
+// is a usage error. Tags are canonicalized on insert but deliberately not
+// copied onto an existing feed: that mirrors the SQLite upsert, which omits tags
+// from its DO UPDATE SET so a routine re-add never drops a feed out of its
+// lanes. Replacing a tag set is SetTags' job.
 func (s *InMemoryStore) AddFeed(_ context.Context, f core.Feed) (core.Feed, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -94,10 +97,35 @@ func (s *InMemoryStore) AddFeed(_ context.Context, f core.Feed) (core.Feed, erro
 		return existing, nil
 	}
 
+	f.Tags = core.CanonicalTags(f.Tags)
 	f.CreatedAt = now
 	f.UpdatedAt = now
 	s.feeds[f.URL] = f
 	return f, nil
+}
+
+// matchesTags reports whether a feed's tags satisfy the filter, mirroring the
+// SQLite json_each predicate: no requested tags matches every feed, MatchAny
+// needs one, and MatchAll (the zero value) needs all. Callers canonicalize want
+// once before the loop, so a per-feed match never re-sorts it.
+func matchesTags(feedTags, want []string, m core.TagMatch) bool {
+	if len(want) == 0 {
+		return true
+	}
+	have := make(map[string]bool, len(feedTags))
+	for _, t := range core.CanonicalTags(feedTags) {
+		have[t] = true
+	}
+	found := 0
+	for _, t := range want {
+		if have[t] {
+			found++
+		}
+	}
+	if m == core.MatchAny {
+		return found > 0
+	}
+	return found == len(want)
 }
 
 // GetFeed returns the feed resolved by exact URL or unique alias.
@@ -135,9 +163,13 @@ func (s *InMemoryStore) ListFeeds(_ context.Context, filter core.ListFilter) ([]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	want := core.CanonicalTags(filter.Tags)
 	var out []core.Feed
 	for _, f := range s.feeds {
 		if filter.Status != "" && f.Status != filter.Status {
+			continue
+		}
+		if !matchesTags(f.Tags, want, filter.Match) {
 			continue
 		}
 		out = append(out, f)
@@ -147,14 +179,19 @@ func (s *InMemoryStore) ListFeeds(_ context.Context, filter core.ListFilter) ([]
 }
 
 // DueFeeds returns active feeds with no next-due time or one at or before now,
-// ordered by URL.
-func (s *InMemoryStore) DueFeeds(_ context.Context, now time.Time) ([]core.Feed, error) {
+// narrowed by the filter's tags and ordered by URL. The filter's Status is
+// ignored: a due feed is active by definition.
+func (s *InMemoryStore) DueFeeds(_ context.Context, now time.Time, filter core.ListFilter) ([]core.Feed, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	want := core.CanonicalTags(filter.Tags)
 	var out []core.Feed
 	for _, f := range s.feeds {
 		if f.Status != core.FeedActive {
+			continue
+		}
+		if !matchesTags(f.Tags, want, filter.Match) {
 			continue
 		}
 		if f.NextDueAt == nil || !f.NextDueAt.After(now) {
@@ -175,6 +212,39 @@ func (s *InMemoryStore) SetStatus(_ context.Context, url string, st core.FeedSta
 		s.feeds[url] = f
 	}
 	return nil
+}
+
+// SetTags replaces a feed's tag set with its canonical form, clearing it to an
+// empty set when tags is empty.
+func (s *InMemoryStore) SetTags(_ context.Context, url string, tags []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if f, ok := s.feeds[url]; ok {
+		f.Tags = core.CanonicalTags(tags)
+		f.UpdatedAt = s.now()
+		s.feeds[url] = f
+	}
+	return nil
+}
+
+// TagCounts returns each distinct tag with the number of subscriptions carrying
+// it, sorted by tag, counting feeds of any status.
+func (s *InMemoryStore) TagCounts(_ context.Context) ([]core.TagCount, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	byTag := map[string]int{}
+	for _, f := range s.feeds {
+		for _, t := range core.CanonicalTags(f.Tags) {
+			byTag[t]++
+		}
+	}
+	counts := make([]core.TagCount, 0, len(byTag))
+	for tag, n := range byTag {
+		counts = append(counts, core.TagCount{Tag: tag, Feeds: n})
+	}
+	sort.Slice(counts, func(i, j int) bool { return counts[i].Tag < counts[j].Tag })
+	return counts, nil
 }
 
 // SetValidators writes conditional-GET validators, never overwriting a stored
@@ -313,12 +383,19 @@ func (s *InMemoryStore) QueryItems(_ context.Context, q core.ItemQuery) (core.It
 	defer s.mu.Unlock()
 
 	feedFilter := s.feedURLSetLocked(q.Feeds)
+	laneFilter := s.laneURLSetLocked(q.Tags, q.Match)
 	pubWindow := q.TimeField != "fetched" && (q.Since != nil || q.Until != nil)
 
 	var out []core.Item
 	omitted := 0
 	for url, byKey := range s.items {
+		// Both sets narrow by AND, and both are applied here so the lane scope
+		// lands before the omitted-no-date count and before pagination, as the
+		// SQL clause does.
 		if feedFilter != nil && !feedFilter[url] {
+			continue
+		}
+		if laneFilter != nil && !laneFilter[url] {
 			continue
 		}
 		for key, it := range byKey {
@@ -364,15 +441,40 @@ func (s *InMemoryStore) feedURLSetLocked(refs []string) map[string]bool {
 	return set
 }
 
+// laneURLSetLocked resolves a tag filter to the set of in-lane feed URLs, or nil
+// when no tag is requested (match all). Items carry no tags of their own, so a
+// lane is a property of the subscription: an item is in-lane exactly when its
+// feed is, mirroring the SQLite feedTagScope subquery. An item whose feed is not
+// subscribed is therefore never in-lane.
+func (s *InMemoryStore) laneURLSetLocked(tags []string, m core.TagMatch) map[string]bool {
+	want := core.CanonicalTags(tags)
+	if len(want) == 0 {
+		return nil
+	}
+	set := make(map[string]bool)
+	for url, f := range s.feeds {
+		if matchesTags(f.Tags, want, m) {
+			set[url] = true
+		}
+	}
+	return set
+}
+
 // PruneItems tombstones item rows per the policy, preserving the dedup
-// fingerprint, and returns the number tombstoned.
+// fingerprint, and returns the number tombstoned. A tag filter scopes both
+// passes to in-lane feeds; as in SQL, the per-feed pass must not rank
+// out-of-lane items, or its cutoff would fall in the wrong place.
 func (s *InMemoryStore) PruneItems(_ context.Context, p core.PrunePolicy) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	lane := s.laneURLSetLocked(p.Tags, p.Match)
 	total := 0
 	if p.KeepBefore != nil {
 		for url, byKey := range s.items {
+			if lane != nil && !lane[url] {
+				continue
+			}
 			for key, it := range byKey {
 				if s.tombstones[url][key] {
 					continue
@@ -387,6 +489,9 @@ func (s *InMemoryStore) PruneItems(_ context.Context, p core.PrunePolicy) (int, 
 
 	if p.MaxPerFeed > 0 {
 		for url, byKey := range s.items {
+			if lane != nil && !lane[url] {
+				continue
+			}
 			var live []core.Item
 			for key, it := range byKey {
 				if !s.tombstones[url][key] {

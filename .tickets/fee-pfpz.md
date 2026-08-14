@@ -1,6 +1,6 @@
 ---
 id: fee-pfpz
-status: open
+status: closed
 deps: [fee-zt9x, fee-c6fa]
 links: []
 created: 2026-08-14T02:43:46Z
@@ -248,3 +248,21 @@ strings.
   only; no `//nolint:gosec` is added.
 - Behaviors 1-9 covered in `internal/store/sqlite/sqlite_test.go`.
 - `make build` passes, and `go test -race ./internal/store/...` is clean.
+
+## Notes
+
+**2026-08-14T19:21:16Z**
+
+Landed the feeds-table half of feed tags in the SQLite store.
+
+Shape: new internal/store/sqlite/tags.go holds tagPredicate(col, tags, match) (the shared json_each fragment, parameterized on the column so fee-2lbg reuses it for the items subquery), encodeTags/decodeTags, SetTags, and TagCounts. feeds.go gained tags in feedColumns and scanFeed (positionally aligned), in AddFeed's INSERT list but NOT its DO UPDATE SET (that omission is what makes a re-add preserve lanes), and both ListFeeds and DueFeeds now assemble a clause list through a shared feedQuery helper instead of appending WHERE inline.
+
+Breaking: store.Store.DueFeeds now takes a core.ListFilter (Tags/Match honored, Status ignored - a due feed is active by definition), and the interface gained SetTags and TagCounts. All eight call sites pass core.ListFilter{} for now; fee-5wk4 threads the real filter through poll. Recorded in CHANGELOG.md under Changed.
+
+core gained TagCount{Tag,Feeds}.
+
+Beyond the minimum: internal/testsupport.InMemoryStore got real feeds-half parity, not just a signature fix - a shared matchesTags helper applied in both ListFeeds and DueFeeds, plus SetTags, TagCounts, and canonicalization on AddFeed. fee-o5uq now only owns the items/prune parity half, so check before duplicating.
+
+Nine behaviors covered in internal/store/sqlite/sqlite_test.go (TestAddFeedRoundTripsCanonicalTags through TestTagCounts) with addTaggedFeed/feedURLs helpers. make build clean, go test -race ./internal/store/... clean.
+
+Next: fee-2lbg is the items/prune half and should reuse tagPredicate from tags.go rather than copying it.

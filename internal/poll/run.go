@@ -85,13 +85,16 @@ func (r Result) ExitCode() int {
 // the caller emits to stderr; a non-nil error is a hard, whole-invocation failure
 // that maps to a sysexits failure code (an unreachable store is 69; an
 // unclassified store write failure is 70).
-func Run(ctx context.Context, d Deps, names []string, force bool) (Result, []*core.FeedError, error) {
-	feeds, err := selectFeeds(ctx, d, names, force)
+//
+// filter narrows the unnamed selections to a lane, and the skipped count with
+// them, so a lane-scoped poll reports only feeds that were candidates.
+func Run(ctx context.Context, d Deps, names []string, force bool, filter core.ListFilter) (Result, []*core.FeedError, error) {
+	feeds, err := selectFeeds(ctx, d, names, force, filter)
 	if err != nil {
 		return Result{}, nil, err
 	}
 
-	skipped, err := skippedCount(ctx, d, names, force, len(feeds))
+	skipped, err := skippedCount(ctx, d, names, force, filter, len(feeds))
 	if err != nil {
 		return Result{}, nil, err
 	}
@@ -136,11 +139,13 @@ func orderedItems(feeds []core.Feed, totals pollTotals) []core.Item {
 // skippedCount reports how many active feeds were left unpolled because they were
 // not due. Skipping only happens on the unnamed, unforced due path; named or
 // forced runs target their feeds regardless of schedule, so nothing is skipped.
-func skippedCount(ctx context.Context, d Deps, names []string, force bool, polled int) (int, error) {
+// The count is taken over the same lane the selection drew from, so a
+// lane-scoped poll never reports feeds that were never candidates.
+func skippedCount(ctx context.Context, d Deps, names []string, force bool, filter core.ListFilter, polled int) (int, error) {
 	if len(names) > 0 || force {
 		return 0, nil
 	}
-	active, err := d.Store.ListFeeds(ctx, core.ListFilter{Status: core.FeedActive})
+	active, err := d.Store.ListFeeds(ctx, activeIn(filter))
 	if err != nil {
 		return 0, err
 	}

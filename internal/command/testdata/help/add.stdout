@@ -5,9 +5,10 @@ USAGE:
    feedwatch add [options] URL
 
 OPTIONS:
-   --alias string       short, unique name to reference the feed
-   --interval duration  minimum poll interval; 0 uses the configured default (default: 0s)
-   --help, -h           show help
+   --alias string                 short, unique name to reference the feed
+   --interval duration            minimum poll interval; 0 uses the configured default (default: 0s)
+   --tag string [ --tag string ]  tag to assign (repeatable); omitted preserves existing tags on a re-add, given replaces them; use 'tag --clear' to remove every tag
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

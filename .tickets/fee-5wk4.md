@@ -1,6 +1,6 @@
 ---
 id: fee-5wk4
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq, fee-frus]
 links: []
 created: 2026-08-14T02:48:06Z
@@ -177,3 +177,21 @@ use `--tag` and should be unchanged; verify rather than assume, since the
 - `schema/{poll,check,all}.stdout` and `help/{poll,check}.stdout` are
   regenerated; the poll behavioral goldens are confirmed unchanged.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T20:07:16Z**
+
+Implemented --tag/--match on poll and check.
+
+Library: PollRequest and CheckRequest carry Tags/Match, resolved through an unexported filter() method (mirroring ListRequest.filter) that both Validate and the use case call, so the rules are stated once. --tag combined with positional feed refs is a usage error on both commands, rejected before the store is resolved so nothing is fetched.
+
+internal/poll: Run and selectFeeds take a core.ListFilter. It applies to the force branch (via a new activeIn helper that pins Status=active) and the due branch, and crucially to skippedCount, which now counts against the lane instead of every active feed in the store. Named-refs branch is deliberately unfiltered. poll --tag narrows the due selection and does not imply --force.
+
+check: checkTargets takes the filter and sets Status=active on it, so a disabled feed carrying the lane's tag is still skipped.
+
+Tests: behaviors 1-10 covered across poll_test.go, check_test.go, internal/command/poll_test.go, internal/command/check_test.go. The CLI rejection tests assert on the fetcher's per-URL request count, not just exit 64, so a validation that ran after the store was dialed would fail. newPollApp now returns the fetcher and pollFeed gained tags/notDue/disabled fields; existing callers updated.
+
+Goldens: schema/{poll,check,all}.stdout and help/{poll,check}.stdout regenerated. The poll behavioral goldens (lifecycle, all_failed, partial, auto_disable, opml/poll) are unchanged, confirmed via git status despite the skippedCount change touching the skipped field they all carry. reflectflags_test.go requestSurfaceCases updated: poll 1->3 flags, check 0->2.
+
+make build passes.

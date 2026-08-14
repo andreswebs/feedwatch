@@ -112,7 +112,7 @@ func TestRunInterruptPersistsCompletedFeeds(t *testing.T) {
 	}
 	done := make(chan runResult, 1)
 	go func() {
-		r, _, err := Run(ctx, d, nil, false)
+		r, _, err := Run(ctx, d, nil, false, core.ListFilter{})
 		done <- runResult{r, err}
 	}()
 

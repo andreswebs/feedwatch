@@ -15,6 +15,11 @@ type Feed struct {
 	// Title is the display label, taken from the text attribute and falling back
 	// to title. It may be empty.
 	Title string
+	// Tags are the lane names carried by the category attribute. OPML 2.0 defines
+	// category as a comma-separated list, and a feedwatch tag can hold no comma,
+	// so a plain join needs no escaping. Slash-delimited hierarchy is not
+	// interpreted: a tag containing a slash is one tag.
+	Tags []string
 }
 
 // Invalid is a feed-like outline that carried no usable URL. It is reported
@@ -41,6 +46,7 @@ type outline struct {
 	Type     string    `xml:"type,attr"`
 	XMLURL   string    `xml:"xmlUrl,attr"`
 	URL      string    `xml:"url,attr"`
+	Category string    `xml:"category,attr"`
 	Outlines []outline `xml:"outline"`
 }
 
@@ -65,7 +71,7 @@ func walk(outlines []outline, feeds *[]Feed, invalid *[]Invalid) {
 		title := firstNonEmpty(o.Text, o.Title)
 
 		if url != "" {
-			*feeds = append(*feeds, Feed{XMLURL: url, Title: title})
+			*feeds = append(*feeds, Feed{XMLURL: url, Title: title, Tags: splitCategory(o.Category)})
 		} else if isFeedType(o.Type) {
 			*invalid = append(*invalid, Invalid{Title: title, Reason: "outline declares a feed type but has no xmlUrl or url"})
 		}
@@ -74,6 +80,23 @@ func walk(outlines []outline, feeds *[]Feed, invalid *[]Invalid) {
 			walk(o.Outlines, feeds, invalid)
 		}
 	}
+}
+
+// splitCategory reads an OPML category attribute into tags, trimming each
+// element and dropping empties, so a foreign exporter's "ai, agents," yields two
+// usable tags. It returns nil for an absent or all-empty attribute, so an
+// untagged outline is indistinguishable from one that predates the attribute.
+func splitCategory(category string) []string {
+	if category == "" {
+		return nil
+	}
+	var tags []string
+	for _, part := range strings.Split(category, ",") {
+		if t := strings.TrimSpace(part); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	return tags
 }
 
 // isFeedType reports whether an outline type attribute marks it as a feed, so a
@@ -111,11 +134,16 @@ type exportOutline struct {
 	Text   string `xml:"text,attr"`
 	Title  string `xml:"title,attr"`
 	XMLURL string `xml:"xmlUrl,attr"`
+	// Category follows XMLURL because encoding/xml emits attributes in field
+	// order, and omitempty keeps an untagged feed's outline byte-identical to
+	// what feedwatch emitted before tags existed.
+	Category string `xml:"category,attr,omitempty"`
 }
 
 // Write serializes feeds as a valid OPML 2.0 document, one type="rss" outline
-// per feed carrying its xmlUrl and its Title as both text and title. The output
-// round-trips through Parse. encoding/xml handles attribute escaping, so titles
+// per feed carrying its xmlUrl, its Title as both text and title, and its tags
+// as a comma-joined category attribute omitted entirely when there are none. The
+// output round-trips through Parse. encoding/xml handles attribute escaping, so titles
 // and URLs bearing XML metacharacters stay well-formed.
 func Write(w io.Writer, feeds []Feed) error {
 	doc := exportDoc{
@@ -125,10 +153,11 @@ func Write(w io.Writer, feeds []Feed) error {
 	}
 	for _, f := range feeds {
 		doc.Body.Outlines = append(doc.Body.Outlines, exportOutline{
-			Type:   "rss",
-			Text:   f.Title,
-			Title:  f.Title,
-			XMLURL: f.XMLURL,
+			Type:     "rss",
+			Text:     f.Title,
+			Title:    f.Title,
+			XMLURL:   f.XMLURL,
+			Category: strings.Join(f.Tags, ","),
 		})
 	}
 

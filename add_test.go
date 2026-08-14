@@ -3,6 +3,7 @@ package feedwatch_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -107,4 +108,111 @@ func TestAddRejectsBadURLBeforeFetching(t *testing.T) {
 		t.Errorf("fetcher saw %d request(s), want 0", n)
 	}
 	wantNoFeeds(t, st)
+}
+
+// TestAddStoresAndReportsTags covers behavior 1: --tag on a new feed stores the
+// canonical set and reports it in AddResult.Tags.
+func TestAddStoresAndReportsTags(t *testing.T) {
+	app, st, fetcher, parser := newNetworkApp(t)
+	registerFeed(fetcher, parser, addFeedURL, "Example Blog")
+	ctx := context.Background()
+
+	res, err := app.Add(ctx, feedwatch.AddRequest{URL: addFeedURL, Tags: []string{"AI", "agents"}})
+	if err != nil {
+		t.Fatalf("Add = %v, want nil", err)
+	}
+	want := []string{"agents", "ai"}
+	if !slices.Equal(res.Tags, want) {
+		t.Errorf("tags = %v, want %v", res.Tags, want)
+	}
+
+	stored, err := st.GetFeed(ctx, addFeedURL)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if !slices.Equal(stored.Tags, want) {
+		t.Errorf("stored tags = %v, want %v", stored.Tags, want)
+	}
+}
+
+// TestAddReAddPreservesTagsWhenOmitted covers behavior 4: a re-add carrying no
+// --tag keeps the feed in the lanes it already had.
+func TestAddReAddPreservesTagsWhenOmitted(t *testing.T) {
+	app, st, fetcher, parser := newNetworkApp(t)
+	registerFeed(fetcher, parser, addFeedURL, "Example Blog")
+	ctx := context.Background()
+
+	if _, err := app.Add(ctx, feedwatch.AddRequest{URL: addFeedURL, Tags: []string{"ai"}}); err != nil {
+		t.Fatalf("Add = %v, want nil", err)
+	}
+
+	res, err := app.Add(ctx, feedwatch.AddRequest{URL: addFeedURL, Alias: "example"})
+	if err != nil {
+		t.Fatalf("re-Add = %v, want nil", err)
+	}
+	if res.Created {
+		t.Errorf("created = true on a re-add, want false")
+	}
+	if want := []string{"ai"}; !slices.Equal(res.Tags, want) {
+		t.Errorf("tags = %v, want %v", res.Tags, want)
+	}
+
+	stored, err := st.GetFeed(ctx, addFeedURL)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if want := []string{"ai"}; !slices.Equal(stored.Tags, want) {
+		t.Errorf("stored tags = %v, want %v", stored.Tags, want)
+	}
+}
+
+// TestAddReAddReplacesTagsWhenGiven covers behavior 5: a re-add naming tags
+// replaces the whole stored set rather than merging into it.
+func TestAddReAddReplacesTagsWhenGiven(t *testing.T) {
+	app, st, fetcher, parser := newNetworkApp(t)
+	registerFeed(fetcher, parser, addFeedURL, "Example Blog")
+	ctx := context.Background()
+
+	if _, err := app.Add(ctx, feedwatch.AddRequest{URL: addFeedURL, Tags: []string{"ai", "agents"}}); err != nil {
+		t.Fatalf("Add = %v, want nil", err)
+	}
+
+	res, err := app.Add(ctx, feedwatch.AddRequest{URL: addFeedURL, Tags: []string{"research"}})
+	if err != nil {
+		t.Fatalf("re-Add = %v, want nil", err)
+	}
+	want := []string{"research"}
+	if !slices.Equal(res.Tags, want) {
+		t.Errorf("tags = %v, want %v", res.Tags, want)
+	}
+
+	stored, err := st.GetFeed(ctx, addFeedURL)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if !slices.Equal(stored.Tags, want) {
+		t.Errorf("stored tags = %v, want %v", stored.Tags, want)
+	}
+}
+
+// TestAddRejectsUnusableTagBeforeSubscribing covers behavior 6: an unusable tag
+// is a usage error raised by Validate, so nothing is fetched and nothing is
+// subscribed.
+func TestAddRejectsUnusableTagBeforeSubscribing(t *testing.T) {
+	for name, tt := range map[string]struct{ tag, msg string }{
+		"comma": {"a,b", `tag must not contain a comma, got "a,b"`},
+		"empty": {"", `tag must not be empty, got ""`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			app, st, fetcher, parser := newNetworkApp(t)
+			registerFeed(fetcher, parser, addFeedURL, "Example Blog")
+
+			_, err := app.Add(context.Background(), feedwatch.AddRequest{URL: addFeedURL, Tags: []string{tt.tag}})
+			wantUsageError(t, err, tt.msg)
+			wantNoFeeds(t, st)
+			if n := len(fetcher.Requests(addFeedURL)); n != 0 {
+				t.Errorf("fetcher saw %d request(s), want 0", n)
+			}
+		})
+	}
 }

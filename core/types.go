@@ -16,6 +16,7 @@ const (
 type Feed struct {
 	URL          string        // canonical identity
 	Alias        string        // optional, unique when set
+	Tags         []string      // user-assigned lane labels, canonical order
 	Interval     time.Duration // 0 means use the configured default
 	Status       FeedStatus
 	ETag         string // conditional-GET validator

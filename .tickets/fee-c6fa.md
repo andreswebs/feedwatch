@@ -1,6 +1,6 @@
 ---
 id: fee-c6fa
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-08-14T02:42:09Z
@@ -100,3 +100,17 @@ parallel assertion.
   tests that hardcoded version 1 are updated, not duplicated.
 - Affected golden files are regenerated and their diffs reviewed.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:13:03Z**
+
+Added internal/store/sqlite/migrations/0002_feed_tags.sql: a single ALTER TABLE feeds ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'. No Go changes needed: loadMigrations embeds migrations/*.sql, derives the version from the NNNN_ prefix, and maxVersion becomes 2 automatically, which also arms the ErrSchemaTooNew guard. No Go code reads the column yet (fee-pfpz does).
+
+Tests (white-box, internal/store/sqlite/migrate_internal_test.go): TestMigrateReachesCurrentVersion (fresh store -> version 2, 0 pending), TestMigrateAddsTagsToExistingFeeds (applyMigrations with only ms[:1], seed a feed via s.db, then Migrate; tags reads '[]' and alias/interval/status/failure_count are unchanged), TestMigrateIsIdempotentAtCurrentVersion (second Migrate applies 0, stays at 2). Pre-existing migration tests needed no edits: TestPendingReflectsUnappliedMigrations compares against len(loadMigrations()), TestMigrateRefusesNewerSchema derives codeMax at runtime, and sqlite_test.go's TestMigrateIsIdempotent asserts >= 1. golden_scenarios_test.go's stampFutureSchema is likewise dynamic (MAX(version)+1).
+
+Golden files regenerated with 'go test ./internal/command -update -count=1'; both diffs are version numbers only: migrate_status.stdout store_schema_version 1 -> 2, and err/schema_too_new.stderr 'stored schema version 3 newer than supported 2'. The too-new fixture stamps max+1, so 2 is now a valid version and 3 is the too-new one.
+
+Deliberately not done, per the ticket design: no index on tags (feed counts are small and SQLite cannot index into a JSON array without an expression index over json_each), no CHECK (json_valid(tags)) constraint (the column is only ever written through encoding/json, matching items.categories), and no backfill (existing rows land on '[]' via the column default).
+
+make build passes.

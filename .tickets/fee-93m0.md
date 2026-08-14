@@ -1,6 +1,6 @@
 ---
 id: fee-93m0
-status: open
+status: closed
 deps: [fee-5wk4]
 links: []
 created: 2026-08-14T02:51:32Z
@@ -114,3 +114,15 @@ scheduler, following the file's existing style.
 - Behaviors 1-4 covered in `daemon/daemon_test.go`, plus an example in
   `daemon/example_test.go`.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T20:30:50Z**
+
+Added daemon.WithTags(tags ...string) and daemon.WithMatch(core.TagMatch) in daemon/options.go, following the package's ignore-the-zero-value convention (empty tag list and empty TagMatch are both ignored). WithTags copies the variadic slice rather than retaining the caller's array. Scheduler gained tags []string and match core.TagMatch next to interval; pollOnce now issues feedwatch.PollRequest{Tags: s.tags, Match: string(s.match)} inline, with no accessor since the construction site is used once. Match stays a string on PollRequest per the CLI reflection projection constraint. No selection logic was added to the daemon.
+
+Tests in daemon/daemon_test.go: a new seedLane helper seeds URL -> tag sets and returns the FakeFetcher so a test can assert the out-of-lane feed was never fetched (fetcher.Requests(url)). Covers lane scoping, MatchAny widening (table with the default MatchAll polling 0 of 3 feeds and MatchAny polling 2), the two unscoped regressions (no WithTags, and WithTags() with no args), and an invalid tag surfacing as a usage-category Event.Err across two consecutive ticks so the scheduler is shown to keep running. Added ExampleScheduler_lane to daemon/example_test.go.
+
+Also corrected daemon/doc.go, which claimed the scheduler 'polls with an empty request', and added a 'One process can watch one lane' section. Mutation check: reverting pollOnce to the zero request fails 5 of the new tests. make build passes, and go test -race -count=2 ./daemon/ is clean.
+
+Next: fee-fxl2 (docs, changelog, manual QA for feed tags) is now unblocked; it should cover the daemon lane options in docs/library.md if that file documents the daemon options.

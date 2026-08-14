@@ -23,10 +23,14 @@ func (*fakeStore) GetFeed(context.Context, string) (core.Feed, error) {
 func (*fakeStore) ListFeeds(context.Context, core.ListFilter) ([]core.Feed, error) {
 	return nil, nil
 }
-func (*fakeStore) DueFeeds(context.Context, time.Time) ([]core.Feed, error) {
+func (*fakeStore) DueFeeds(context.Context, time.Time, core.ListFilter) ([]core.Feed, error) {
 	return nil, nil
 }
 func (*fakeStore) SetStatus(context.Context, string, core.FeedStatus) error { return nil }
+func (*fakeStore) SetTags(context.Context, string, []string) error          { return nil }
+func (*fakeStore) TagCounts(context.Context) ([]core.TagCount, error) {
+	return nil, nil
+}
 func (*fakeStore) SetValidators(context.Context, string, string, string) error {
 	return nil
 }

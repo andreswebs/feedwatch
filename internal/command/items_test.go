@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -726,3 +727,195 @@ func decodeLogLine(t *testing.T, stderr, want string) map[string]any {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+// seedLaneItems seeds the shared three-feed lane fixture and gives each feed
+// four items at distinct publication times, titled with their age in hours so a
+// lane's expected order and page are hand-computable: the ai lane holds k00,
+// k01, k03, k04, k06, k07, k09 and k10 in descending publication order.
+func seedLaneItems(t *testing.T, st *testsupport.InMemoryStore, now time.Time) (both, one, none string) {
+	t.Helper()
+
+	both, one, none = seedLaneFeeds(t, st)
+	for feedIdx, url := range []string{both, one, none} {
+		for j := range 4 {
+			age := time.Duration(3*j+feedIdx) * time.Hour
+			title := fmt.Sprintf("k%02d", int(age.Hours()))
+			seedItem(t, st, url, title, title, now.Add(-age), now)
+		}
+	}
+	return both, one, none
+}
+
+// itemTitles decodes an items envelope from stdout and projects it onto its
+// item titles, which is what every lane assertion compares.
+func itemTitles(t *testing.T, res runResult) []string {
+	t.Helper()
+
+	env := parseItemsEnvelope(t, res.out)
+	titles := make([]string, 0, len(env.Items))
+	for _, it := range env.Items {
+		titles = append(titles, it.Title)
+	}
+	return titles
+}
+
+// TestItemsTagFlagsReachTheRequest covers behaviors 1 through 5 and 8 at the CLI
+// boundary. It fails before any filtering logic if the action does not bind the
+// new flags into the request, and it pins the page as taken over the filtered
+// set, which a post-query Go-side filter would get wrong.
+func TestItemsTagFlagsReachTheRequest(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+	both, _, none := seedLaneItems(t, st, now)
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"one tag narrows to the lane", []string{"--tag", "ai"}, []string{"k00", "k01", "k03", "k04", "k06", "k07", "k09", "k10"}},
+		{"two tags default to match all", []string{"--tag", "ai", "--tag", "agents"}, []string{"k00", "k03", "k06", "k09"}},
+		{"match any unions the lanes", []string{"--tag", "ai,agents", "--match", "any"}, []string{"k00", "k01", "k03", "k04", "k06", "k07", "k09", "k10"}},
+		{"tag and feed intersect rather than union", []string{"--tag", "ai", "--feed", both}, []string{"k00", "k03", "k06", "k09"}},
+		{"a feed outside the lane matches nothing", []string{"--tag", "ai", "--feed", none}, []string{}},
+		{"tag composes with the time window", []string{"--tag", "ai", "--since", "5h"}, []string{"k00", "k01", "k03", "k04"}},
+		{"tag composes with contains", []string{"--tag", "ai", "--contains", "k04"}, []string{"k04"}},
+		{"page is taken over the filtered set", []string{"--tag", "ai", "--limit", "2", "--offset", "2"}, []string{"k03", "k04"}},
+		{"an empty lane is not an error", []string{"--tag", "nosuchlane"}, []string{}},
+		{"no flag queries every feed", []string{"--limit", "3"}, []string{"k00", "k01", "k02"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := runItems(t, st, clk, tt.args...)
+
+			if res.code != 0 {
+				t.Fatalf("items should exit 0, got code %d\nstderr: %q", res.code, res.err)
+			}
+			got := itemTitles(t, res)
+			if len(got) != len(tt.want) {
+				t.Fatalf("titles = %v, want %v", got, tt.want)
+			}
+			for i, k := range tt.want {
+				if got[i] != k {
+					t.Fatalf("titles = %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestItemsTagEmptyLaneSerializesAsList pins the collection-coalescing rule for
+// a lane no feed carries: an empty result is [] and exit 0, not an error.
+func TestItemsTagEmptyLaneSerializesAsList(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+	seedLaneItems(t, st, now)
+
+	res := runItems(t, st, clk, "--tag", "nosuchlane")
+
+	if res.code != 0 {
+		t.Fatalf("an empty lane should exit 0, got code %d\nstderr: %q", res.code, res.err)
+	}
+	if !strings.Contains(res.out, `"items":[]`) {
+		t.Errorf("stdout = %q, want items as []", res.out)
+	}
+}
+
+// TestItemsTagOmittedNoDateCountsOnlyInLane covers behavior 6: the
+// honest-exclusion count is computed over the filtered set, so an undated item
+// outside the lane is never counted against a lane query.
+func TestItemsTagOmittedNoDateCountsOnlyInLane(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+	_, one, none := seedLaneItems(t, st, now)
+	seedItem(t, st, one, "in-lane-dateless", "in-lane-dateless", time.Time{}, now)
+	seedItem(t, st, none, "out-of-lane-dateless", "out-of-lane-dateless", time.Time{}, now)
+
+	res := runItems(t, st, clk, "--tag", "ai", "--since", "24h")
+
+	if res.code != 0 {
+		t.Fatalf("items should exit 0, got code %d\nstderr: %q", res.code, res.err)
+	}
+	var env struct {
+		OmittedNoDate int `json:"omitted_no_date"`
+	}
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not an items envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.OmittedNoDate != 1 {
+		t.Errorf("omitted_no_date = %d, want 1: only the in-lane undated item counts", env.OmittedNoDate)
+	}
+}
+
+// TestItemsTagProjects covers behavior 7: --tag narrows the rows a projection
+// renders without changing the projected envelope's shape.
+func TestItemsTagProjects(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+	seedLaneItems(t, st, now)
+
+	res := runItems(t, st, clk, "--tag", "ai", "--tag", "agents", "--fields", "title")
+
+	if res.code != 0 {
+		t.Fatalf("items should exit 0, got code %d\nstderr: %q", res.code, res.err)
+	}
+	rows := itemKeys(t, res.out)
+	if len(rows) != 4 {
+		t.Fatalf("projected %d row(s), want 4: only the both-lane feed's items\ngot: %q", len(rows), res.out)
+	}
+	for _, row := range rows {
+		if len(row) != 2 {
+			t.Errorf("row = %v, want exactly feed_url and title", row)
+		}
+		for _, k := range []string{"feed_url", "title"} {
+			if _, ok := row[k]; !ok {
+				t.Errorf("row = %v, missing key %q", row, k)
+			}
+		}
+	}
+}
+
+// TestItemsRejectsInvalidTagSelection covers behavior 9: an unknown --match
+// value and an unstorable tag name exit 64 with an empty stdout and an error
+// envelope naming the problem, returning no partial results.
+func TestItemsRejectsInvalidTagSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"unknown match", []string{"--tag", "ai", "--match", "bogus"}, []string{"all", "any"}},
+		{"empty tag", []string{"--tag", ""}, []string{"empty"}},
+		{"tag with whitespace", []string{"--tag", "a b"}, []string{"whitespace"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := pollFixedTime()
+			clk := testsupport.FixedClock(now)
+			st := testsupport.NewInMemoryStore(clk)
+			seedLaneItems(t, st, now)
+
+			res := runItems(t, st, clk, tt.args...)
+
+			if res.code != 64 {
+				t.Fatalf("an invalid tag selection should exit 64 (usage), got code=%d\nstdout: %q", res.code, res.out)
+			}
+			if res.out != "" {
+				t.Errorf("stdout = %q, want empty on a rejected query", res.out)
+			}
+			var env errEnvelope
+			if err := json.Unmarshal([]byte(res.err), &env); err != nil {
+				t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(env.Error.Message, want) {
+					t.Errorf("error message = %q, want it to mention %q", env.Error.Message, want)
+				}
+			}
+		})
+	}
+}

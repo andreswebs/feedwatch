@@ -1,11 +1,13 @@
 NAME:
-   feedwatch rm - unsubscribe a feed by URL or unique alias, removing its stored items
+   feedwatch rm - unsubscribe a feed by URL or unique alias, or a whole lane by tag, removing their stored items
 
 USAGE:
    feedwatch rm [options] URL|ALIAS
 
 OPTIONS:
-   --help, -h  show help
+   --tag string [ --tag string ]  unsubscribe every feed carrying this tag (repeatable), deleting their stored items too; cannot be combined with a named feed
+   --match string                 multi-tag semantics: 'all' (default) or 'any' (default: "all")
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

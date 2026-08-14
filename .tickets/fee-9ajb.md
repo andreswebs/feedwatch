@@ -1,6 +1,6 @@
 ---
 id: fee-9ajb
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq]
 links: []
 created: 2026-08-14T02:45:14Z
@@ -205,3 +205,15 @@ mirror struct.
   `testdata/schema/all.stdout`, and `testdata/help/root.stdout` are
   regenerated and their diffs reviewed.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:53:17Z**
+
+Delivered TagRequest/TagResult + App.Tag in tag.go and the CLI projection in internal/command/tag.go, registered in Deps.commands() (after disable), schemaRegistry, schema_test's command list and objects map, envelope_test's envelopeCases, and reflectflags_test's requestSurfaceCases (that last one was not in the ticket checklist but fails hard on any new *Request type - T7 will hit it too).
+
+Semantics as specced: read mode with no write flag, --clear/--set exclusive with the rest (usage errors in Validate), --add applied before --remove so a tag in both ends up removed, added/removed are the actual set difference, and the store write is skipped entirely when the canonical sets are equal. MarshalJSON coalesces tags/added/removed to [].
+
+Testing note for whoever does T7/T10-T12: the 'performs no write' rule cannot be asserted via updated_at, because newTestApp runs on a FixedClock and the column is identical either way. tag_test.go uses a tagWriteSpy decorator over InMemoryStore that counts SetTags calls. Also note core.ValidateTags' comma rule is unreachable from the CLI (slice flags split on commas first), so it is covered at the library level only.
+
+Goldens testdata/schema/tag.stdout and testdata/help/tag.stdout are new; schema/all.stdout and help/root.stdout changed. Verified end to end on the native binary against a SQLite store with cmd/qafixtures: add --tag, read, --add/--remove, --set, --clear, --format text, and list all behave as documented. make build green.

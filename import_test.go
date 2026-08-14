@@ -226,3 +226,121 @@ func TestImportWithoutValidationNeverFetches(t *testing.T) {
 		}
 	}
 }
+
+// TestImportAssignsTagsFromCategory covers behavior 5: an outline's category
+// attribute becomes the subscription's tags, canonicalized.
+func TestImportAssignsTagsFromCategory(t *testing.T) {
+	app, st, _ := newTestApp(t)
+	doc := `<opml version="2.0"><body>
+    <outline type="rss" text="Alpha" xmlUrl="https://a.example/feed.xml" category="AI, agents"/>
+  </body></opml>`
+
+	res, err := app.Import(context.Background(), feedwatch.ImportRequest{OPML: []byte(doc)})
+	if err != nil {
+		t.Fatalf("Import = %v, want nil", err)
+	}
+	if res.Added != 1 {
+		t.Fatalf("added = %d, want 1 (failed %v)", res.Added, res.Failed)
+	}
+	if got, want := strings.Join(storedTags(t, st, "https://a.example/feed.xml"), "|"), "agents|ai"; got != want {
+		t.Errorf("stored tags = %q, want %q", got, want)
+	}
+}
+
+// TestImportDropsInvalidTag covers behavior 6: OPML comes from foreign tools, so
+// an unusable tag is dropped rather than failing the whole outline; the feed is
+// still subscribed with its valid tags.
+func TestImportDropsInvalidTag(t *testing.T) {
+	app, st, _ := newTestApp(t)
+	doc := `<opml version="2.0"><body>
+    <outline type="rss" text="Alpha" xmlUrl="https://a.example/feed.xml" category="ai,two words"/>
+  </body></opml>`
+
+	res, err := app.Import(context.Background(), feedwatch.ImportRequest{OPML: []byte(doc)})
+	if err != nil {
+		t.Fatalf("Import = %v, want nil", err)
+	}
+	if res.Added != 1 || len(res.Failed) != 0 {
+		t.Fatalf("added/failed = %d/%v, want 1/none", res.Added, res.Failed)
+	}
+	if got, want := strings.Join(storedTags(t, st, "https://a.example/feed.xml"), "|"), "ai"; got != want {
+		t.Errorf("stored tags = %q, want %q (the whitespace tag dropped)", got, want)
+	}
+}
+
+// TestImportPreservesTagsOfSubscribedFeed covers behavior 8: an already
+// subscribed feed is skipped, and its stored tags are left alone rather than
+// overwritten by the document's.
+func TestImportPreservesTagsOfSubscribedFeed(t *testing.T) {
+	app, st, _ := newTestApp(t)
+	seedTaggedSubscription(t, st, "https://a.example/feed.xml", "mine")
+	doc := `<opml version="2.0"><body>
+    <outline type="rss" text="Alpha" xmlUrl="https://a.example/feed.xml" category="theirs"/>
+  </body></opml>`
+
+	res, err := app.Import(context.Background(), feedwatch.ImportRequest{OPML: []byte(doc)})
+	if err != nil {
+		t.Fatalf("Import = %v, want nil", err)
+	}
+	if res.Added != 0 || res.Skipped != 1 {
+		t.Fatalf("added/skipped = %d/%d, want 0/1", res.Added, res.Skipped)
+	}
+	if got, want := strings.Join(storedTags(t, st, "https://a.example/feed.xml"), "|"), "mine"; got != want {
+		t.Errorf("stored tags = %q, want %q untouched", got, want)
+	}
+}
+
+// TestExportImportRoundTripsTags covers behavior 7: two differently tagged feeds
+// exported and imported into a fresh store keep their lanes exactly.
+func TestExportImportRoundTripsTags(t *testing.T) {
+	source, srcStore, _ := newTestApp(t)
+	ctx := context.Background()
+	seedTaggedSubscription(t, srcStore, "https://a.example/feed.xml", "ai", "agents")
+	seedTaggedSubscription(t, srcStore, "https://b.example/feed.xml", "news")
+	seedSubscription(t, srcStore, "https://c.example/feed.xml", "")
+
+	exported, err := source.Export(ctx, feedwatch.ExportRequest{})
+	if err != nil {
+		t.Fatalf("Export = %v, want nil", err)
+	}
+
+	target, dstStore, _ := newTestApp(t)
+	res, err := target.Import(ctx, feedwatch.ImportRequest{OPML: []byte(exported.OPML)})
+	if err != nil {
+		t.Fatalf("Import = %v, want nil", err)
+	}
+	if res.Added != 3 || len(res.Failed) != 0 {
+		t.Fatalf("added/failed = %d/%v, want 3/none", res.Added, res.Failed)
+	}
+
+	want := map[string]string{
+		"https://a.example/feed.xml": "agents|ai",
+		"https://b.example/feed.xml": "news",
+		"https://c.example/feed.xml": "",
+	}
+	for url, tags := range want {
+		if got := strings.Join(storedTags(t, dstStore, url), "|"); got != tags {
+			t.Errorf("feed %s tags = %q, want %q", url, got, tags)
+		}
+	}
+}
+
+// storedTags reads back one feed's stored tags, failing the test when the feed
+// is not subscribed.
+func storedTags(t *testing.T, st interface {
+	ListFeeds(context.Context, core.ListFilter) ([]core.Feed, error)
+}, url string,
+) []string {
+	t.Helper()
+	feeds, err := st.ListFeeds(context.Background(), core.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListFeeds: %v", err)
+	}
+	for _, f := range feeds {
+		if f.URL == url {
+			return f.Tags
+		}
+	}
+	t.Fatalf("feed %s is not subscribed", url)
+	return nil
+}

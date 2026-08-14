@@ -32,8 +32,9 @@ func (d Deps) exportCommand() *cliv3.Command {
 // exportAction delegates to the library and writes the OPML document it returns.
 // The document is the result payload, not a JSON envelope: it goes to the -o file
 // when given, otherwise to stdout. Choosing the destination is the frontend's
-// job, so an unwritable output file is a usage error (exit 64) raised here; a
-// store failure (exit 69) propagates from the library to the boundary.
+// job, so an unwritable output file is a usage error (exit 64) raised here; an
+// invalid tag name or --match value is a usage error too, and a store failure
+// (exit 69) propagates from the library to the boundary.
 func (d Deps) exportAction(ctx context.Context, cmd *cliv3.Command) error {
 	app, err := d.app(ctx)
 	if err != nil {
@@ -41,7 +42,12 @@ func (d Deps) exportAction(ctx context.Context, cmd *cliv3.Command) error {
 	}
 	defer func() { _ = app.Close() }()
 
-	res, err := app.Export(ctx, feedwatch.ExportRequest{})
+	var req feedwatch.ExportRequest
+	if err := bind(cmd, &req); err != nil {
+		return err
+	}
+
+	res, err := app.Export(ctx, req)
 	if err != nil {
 		return err
 	}

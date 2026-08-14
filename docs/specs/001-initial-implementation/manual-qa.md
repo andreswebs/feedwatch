@@ -498,7 +498,7 @@ invocation failures use the BSD `sysexits.h` range, never exit 1.
 #### TC-SUB-006: `rm` by URL and by alias (P0)
 
 - **Steps:** add a feed; `feedwatch rm <alias>`; re-add; `feedwatch rm <url>`.
-- **Expected:** `{"schema_version":1,"ok":true,"removed":<url>}`; subscription
+- **Expected:** `{"schema_version":1,"ok":true,"removed":[<url>]}`; subscription
   gone from `list`; its stored items removed.
 
 #### TC-SUB-007: `list` reports health fields (P0)

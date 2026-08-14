@@ -434,3 +434,29 @@ func TestImportValidatesConcurrently(t *testing.T) {
 		t.Errorf("failed = %+v, want only the non-feed sibling", env.Failed)
 	}
 }
+
+// TestImportAssignsTagsFromCategory covers the OPML category attribute reaching
+// the store through the CLI: the imported feed lands in the lanes the document
+// named.
+func TestImportAssignsTagsFromCategory(t *testing.T) {
+	st := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
+	doc := `<opml version="2.0"><body>
+    <outline type="rss" text="Alpha" xmlUrl="https://a.example/feed.xml" category="AI, agents"/>
+  </body></opml>`
+
+	res := runImport(t, st, nil, "--no-validate", writeOPML(t, doc))
+	if res.code != 0 {
+		t.Fatalf("import should exit 0, got code %d (stderr %q)", res.code, res.err)
+	}
+
+	feeds, err := st.ListFeeds(context.Background(), core.ListFilter{})
+	if err != nil {
+		t.Fatalf("ListFeeds: %v", err)
+	}
+	if len(feeds) != 1 {
+		t.Fatalf("feeds = %d, want 1", len(feeds))
+	}
+	if got, want := strings.Join(feeds[0].Tags, "|"), "agents|ai"; got != want {
+		t.Errorf("stored tags = %q, want %q", got, want)
+	}
+}

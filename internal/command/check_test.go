@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/andreswebs/feedwatch/core"
@@ -321,5 +322,112 @@ func TestCheckSchemaRegistered(t *testing.T) {
 	}
 	if _, ok := exitCodes["3"]; !ok {
 		t.Errorf("exit_codes must include code 3 (partial)")
+	}
+}
+
+// TestCheckTagFlagsReachTheRequest covers behavior 7 at the CLI boundary: the
+// lane flags bind into the request and narrow the checked set.
+func TestCheckTagFlagsReachTheRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"no flag checks every active feed", []string{"check"}, 3},
+		{"one tag narrows to the lane", []string{"check", "--tag", "ai"}, 2},
+		{"two tags default to match all", []string{"check", "--tag", "ai", "--tag", "agents"}, 1},
+		{"match any unions the lanes", []string{"check", "--tag", "ai", "--tag", "agents", "--match", "any"}, 2},
+		{"an empty lane is not an error", []string{"check", "--tag", "nosuchlane"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, fetcher, parser := newCheckDoubles(t)
+			seedLanePollFeeds(t, st, fetcher, parser)
+
+			res := runCheck(t, st, fetcher, parser, tt.args...)
+
+			if res.code != 0 {
+				t.Fatalf("check should exit 0, got code %d\nstderr: %q", res.code, res.err)
+			}
+			var env checkEnvelope
+			if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+				t.Fatalf("stdout is not a check envelope: %v\ngot: %q", err, res.out)
+			}
+			if env.Checked != tt.want {
+				t.Errorf("checked = %d, want %d", env.Checked, tt.want)
+			}
+		})
+	}
+}
+
+// TestCheckRejectsInvalidTagSelection covers behaviors 8 and 10 at the CLI
+// boundary: check applies poll's selection rules, exiting 64 with an empty
+// stdout and fetching nothing.
+func TestCheckRejectsInvalidTagSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"tag with named feed", []string{"check", "--tag", "ai", "https://both.example/feed.xml"}, []string{"--tag", "named feeds"}},
+		{"unknown match", []string{"check", "--tag", "ai", "--match", "bogus"}, []string{"all", "any"}},
+		{"tag with whitespace", []string{"check", "--tag", "a b"}, []string{"whitespace"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, fetcher, parser := newCheckDoubles(t)
+			both, _, _ := seedLanePollFeeds(t, st, fetcher, parser)
+
+			res := runCheck(t, st, fetcher, parser, tt.args...)
+
+			if res.code != 64 {
+				t.Fatalf("an invalid tag selection should exit 64 (usage), got code=%d\nstdout: %q", res.code, res.out)
+			}
+			if res.out != "" {
+				t.Errorf("stdout = %q, want empty on a rejected check", res.out)
+			}
+			if n := len(fetcher.Requests(both)); n != 0 {
+				t.Errorf("feed was fetched %d time(s), want 0 on a rejected check", n)
+			}
+
+			var env errEnvelope
+			if err := json.Unmarshal([]byte(res.err), &env); err != nil {
+				t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
+			}
+			if env.Error.Code != core.ErrUsage.Code() {
+				t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(env.Error.Message, want) {
+					t.Errorf("message = %q, want it to mention %q", env.Error.Message, want)
+				}
+			}
+		})
+	}
+}
+
+// TestCheckDisabledFeedInLaneIsSkipped covers behavior 9 at the CLI boundary:
+// status filtering comes first, so a disabled feed in the lane is not checked.
+func TestCheckDisabledFeedInLaneIsSkipped(t *testing.T) {
+	st, fetcher, parser := newCheckDoubles(t)
+	_, one, _ := seedLanePollFeeds(t, st, fetcher, parser)
+	if err := st.SetStatus(context.Background(), one, core.FeedDisabled); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+
+	res := runCheck(t, st, fetcher, parser, "check", "--tag", "ai")
+
+	if res.code != 0 {
+		t.Fatalf("check should exit 0, got code %d\nstderr: %q", res.code, res.err)
+	}
+	var env checkEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a check envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.Checked != 1 {
+		t.Errorf("checked = %d, want only the active in-lane feed", env.Checked)
+	}
+	if n := len(fetcher.Requests(one)); n != 0 {
+		t.Errorf("disabled in-lane feed was fetched %d time(s), want 0", n)
 	}
 }

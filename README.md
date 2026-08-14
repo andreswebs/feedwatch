@@ -57,7 +57,7 @@ feedwatch add https://blog.go.dev/feed.atom --alias godev
 
 # Poll due feeds; new items are returned and marked seen.
 feedwatch poll
-# {"polled":1,"skipped":0,"new_items":3,"items":[...]}
+# {"schema_version":1,"ok":true,"polled":1,"skipped":0,"new_items":3,"items":[...]}
 
 # Re-query stored history at any time, with filters.
 feedwatch items --feed godev --since 7d --limit 50
@@ -65,6 +65,24 @@ feedwatch items --feed godev --since 7d --limit 50
 # List subscriptions and their health.
 feedwatch list
 ```
+
+Feeds can be grouped into **lanes** by tag, so one interest group can be polled,
+queried, or exported on its own without splitting state across databases (which
+would break global deduplication):
+
+```sh
+feedwatch add https://blog.go.dev/feed.atom --alias godev --tag go --tag lang
+feedwatch tag godev --add release        # or --remove, --set, --clear
+feedwatch tags                           # the vocabulary, with feed counts
+
+feedwatch poll --tag go                  # only due feeds in the lane
+feedwatch items --tag go --since 24h
+feedwatch export --tag go -o go-lane.opml
+```
+
+`--tag` is repeatable (or comma-separated) and `--match all|any` chooses the
+multi-tag semantics. It is accepted by `list`, `poll`, `check`, `items`,
+`prune`, `rm`, and `export`.
 
 To turn a site homepage into a feed URL, call `discover` first (it never
 guesses over the network during `add`):

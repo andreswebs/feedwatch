@@ -103,3 +103,51 @@ func TestExportRoundTripsWithImport(t *testing.T) {
 		t.Errorf("URL = %q, want the round-tripped feed", feed.URL)
 	}
 }
+
+// seedTaggedFeed adds a feed carrying tags to the store, failing the test on
+// error.
+func seedTaggedFeed(t *testing.T, st store.Store, url string, tags ...string) {
+	t.Helper()
+	if _, err := st.AddFeed(context.Background(), core.Feed{URL: url, Tags: tags}); err != nil {
+		t.Fatalf("seed AddFeed %s: %v", url, err)
+	}
+}
+
+// TestExportFiltersByTag covers behavior 4 at the CLI boundary: --tag reaches
+// the library, so only the named lane is written. It is the regression test for
+// the missing bind call, which made the flag parse and be discarded.
+func TestExportFiltersByTag(t *testing.T) {
+	st := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
+	seedTaggedFeed(t, st, "https://in.example/feed.xml", "ai")
+	seedTaggedFeed(t, st, "https://out.example/feed.xml", "news")
+
+	res := runExport(t, st, "--tag", "ai")
+	if res.code != 0 {
+		t.Fatalf("export should exit 0, got code %d (stderr %q)", res.code, res.err)
+	}
+
+	if !strings.Contains(res.out, "https://in.example/feed.xml") {
+		t.Errorf("stdout = %q, want it to carry the in-lane feed", res.out)
+	}
+	if strings.Contains(res.out, "https://out.example/feed.xml") {
+		t.Errorf("stdout = %q, want the out-of-lane feed absent", res.out)
+	}
+	if !strings.Contains(res.out, `category="ai"`) {
+		t.Errorf("stdout = %q, want the tag written as a category attribute", res.out)
+	}
+}
+
+// TestExportRejectsInvalidTagSelection covers behavior 9: an unknown --match
+// value exits 64 and writes no document.
+func TestExportRejectsInvalidTagSelection(t *testing.T) {
+	st := testsupport.NewInMemoryStore(testsupport.FixedClock(pollFixedTime()))
+	seedTaggedFeed(t, st, "https://in.example/feed.xml", "ai")
+
+	res := runExport(t, st, "--tag", "ai", "--match", "bogus")
+	if res.code != 64 {
+		t.Fatalf("an invalid tag selection should exit 64 (usage), got code=%d\nstdout: %q", res.code, res.out)
+	}
+	if res.out != "" {
+		t.Errorf("stdout = %q, want empty on a rejected export", res.out)
+	}
+}

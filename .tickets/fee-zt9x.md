@@ -1,6 +1,6 @@
 ---
 id: fee-zt9x
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-08-14T02:42:09Z
@@ -156,3 +156,15 @@ Vertical slices, one test then one implementation each:
   `errors.As`/`errors.Is` rather than message strings.
 - No file outside `core/` is modified.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:10:49Z**
+
+Landed core/tags.go (TagMatch, MatchAll/MatchAny, CanonicalTags, ValidateTags, ParseTagMatch) plus Tags on core.Feed and Tags/Match on ListFilter, ItemQuery, PrunePolicy. Seven behaviors covered in core/tags_test.go (package core_test), asserting via errors.As/errors.Is only.
+
+Nothing outside core/ changed: every existing ListFilter/ItemQuery/PrunePolicy construction site passes a zero value or {Status: ...}, and the zero TagMatch is MatchAll with an empty tag set matching every feed, so no behavior changed and no golden file moved.
+
+Notes for the store lane (fee-pfpz, fee-2lbg): CanonicalTags returns []string{} (never nil) so it marshals to [] without a nil check; ValidateTags checks the RAW input before canonicalization so the message names what the user typed, in order empty then comma then whitespace (strings.ContainsFunc + unicode.IsSpace, so tabs and newlines are caught). Usage errors come from a file-local tagUsageErr building &FeedError{Category: CatUsage, Err: ErrUsage} directly, since the root package's usageErr is not importable from core.
+
+Gotcha recorded in docs/specs/learnings.md: asserting that a message quotes user input must compare against strconv.Quote(value), not the raw value, or control characters fail the check.

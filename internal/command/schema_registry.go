@@ -88,6 +88,8 @@ var schemaRegistry = map[string]cmdMeta{
 	"rm":       {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.RmResult{})},
 	"enable":   {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.EnableResult{})},
 	"disable":  {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.DisableResult{})},
+	"tag":      {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.TagResult{})},
+	"tags":     {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.TagsResult{})},
 	"items":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.ItemsResult{})},
 	"prune":    {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.PruneResult{})},
 	"discover": {exitCodes: defaultExitCodes(), output: jsonschema.Reflect(feedwatch.DiscoverResult{})},

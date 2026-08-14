@@ -1,6 +1,6 @@
 ---
 id: fee-2lbg
-status: open
+status: closed
 deps: [fee-zt9x, fee-c6fa]
 links: []
 created: 2026-08-14T02:43:46Z
@@ -133,3 +133,18 @@ pagination are observable.
 - No change to `items` schema, `core.ValidItemFields`, or `core.ProjectItem`.
 - Behaviors 1-9 covered in `internal/store/sqlite/sqlite_test.go`.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:25:42Z**
+
+Implemented tag filtering for the items half of the SQLite store.
+
+- Added feedTagScope in internal/store/sqlite/tags.go: a thin wrapper over the existing tagPredicate that renders the filter as feed_url IN (SELECT url FROM feeds WHERE <pred>). One helper serves all three statements, so the SQL exists once and no JOIN was introduced (feeds and items both have updated_at, which a JOIN would make ambiguous).
+- QueryItems: the clause goes inside nonDateFilters, next to the feeds filter, so countOmittedNoDate inherits it with no second edit and the filter is applied in SQL ahead of LIMIT/OFFSET. Tag and feed filters compose with AND (intersection).
+- PruneItems: both statements converted from hardcoded strings to strings.Builder plus an accumulating []any (gosec G202). The max-per-feed pass carries the scope twice, on the outer WHERE and on the ROW_NUMBER window's source; the inner one is load-bearing, since an unscoped window ranks in-lane rows against out-of-lane rows and puts the rn > N cutoff in the wrong place.
+- No schema change; core.ValidItemFields and core.ProjectItem untouched. Items still carry no tags of their own.
+- Tests: behaviors 1-9 in internal/store/sqlite/sqlite_test.go via a shared tagFixture (feed tagged ai+agents, feed tagged ai, untagged feed) whose publication times interleave across feeds, so the pagination test (Limit 2 Offset 2 returns k03,k04 filtered versus k02,k03 unfiltered) is a real discriminator against a Go-side filter. All nine failed before the change.
+- make build passes. Learnings appended to docs/specs/learnings.md.
+
+Next: fee-o5uq needs the same items/prune tag parity in the testsupport InMemoryStore before fee-0fcw (items --tag) and fee-7emy (prune --tag) can wire the CLI.

@@ -1,6 +1,6 @@
 ---
 id: fee-frus
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq, fee-47yv]
 links: []
 created: 2026-08-14T02:48:06Z
@@ -182,3 +182,19 @@ changed it for the `tags` field). Regenerate with
 - `schema/list.stdout`, `help/list.stdout`, and `schema/all.stdout` are
   regenerated and reviewed.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:46:46Z**
+
+Added Tags []string (flag "tag") and Match string (flag "match", default "all") to ListRequest; rewrote its doc comment. New root-package tagfilter.go holds the shared tagFilter(tags, match) (core.ListFilter, error) helper that validates tag names via core.ValidateTags, resolves --match via core.ParseTagMatch, and builds the filter; T10-T12 (poll/check, items, prune/rm) should reuse it rather than reinvent. ListRequest.filter() wraps it; Validate discards its result and App.List keeps it, mirroring ItemsRequest/query.
+
+Fixed the bind trap: internal/command/list.go's action passed a literal ListRequest{} and now calls bind(cmd, &req). The CLI tag test was written first and failed with 'flag provided but not defined: -tag', exactly as the ticket predicted. export is now the only command left with a literal-request action -- it needs the same fix the moment ExportRequest grows a field.
+
+Behaviors 1-8 covered: list_test.go gained TestListFiltersByTag (table: no tags, one tag, two tags default-all, --match any, explicit all, empty lane) and TestListRejectsInvalidTagSelection (asserts both Validate and App.List report the same usage error). internal/command/list_test.go gained TestListTagFlagsReachTheRequest, TestListTagSpellingsAreEquivalent (--tag a,b vs --tag a --tag b compared on raw stdout, run under both match values), and TestListRejectsInvalidTagSelection (exit 64, empty stdout, usage_error envelope). Shared seedLaneFeeds/listedURLs helpers in each package.
+
+reflectflags_test.go's TestRequestSurfaceMapping list row went 0 -> 2 flags; that table failed before any golden did, but note it only proves flags are declared, not that they reach the request -- the bind gap lived in exactly that blind spot.
+
+Goldens regenerated: schema/list.stdout (new flags), help/list.stdout (new flags plus the reworded usage line, which now mentions tags), schema/all.stdout. lifecycle/list.stdout was untouched by this ticket as expected.
+
+Note: --match is validated even when no --tag is given, so 'list --match bogus' exits 64 rather than silently ignoring the typo. Learnings appended under 'fee-frus' in docs/specs/learnings.md. make build passes.

@@ -2,6 +2,8 @@ package feedwatch_test
 
 import (
 	"context"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -41,7 +43,7 @@ func TestEnableResetsFailureLifecycle(t *testing.T) {
 		t.Errorf("last error = %q, want empty", res.Feed.LastError)
 	}
 
-	due, err := st.DueFeeds(ctx, now)
+	due, err := st.DueFeeds(ctx, now, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("DueFeeds: %v", err)
 	}
@@ -69,7 +71,7 @@ func TestEnableIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Enable = %v, want nil", err)
 	}
-	if first.Feed != second.Feed {
+	if !reflect.DeepEqual(first.Feed, second.Feed) {
 		t.Errorf("enable is not idempotent: %+v then %+v", first.Feed, second.Feed)
 	}
 }
@@ -80,4 +82,35 @@ func TestEnableUnknownRefIsUsageError(t *testing.T) {
 
 	_, err := app.Enable(context.Background(), feedwatch.EnableRequest{Ref: "nope"})
 	wantUsageError(t, err, "feed not found")
+}
+
+// TestEnableAndDisableReportTags covers behavior 7: both envelopes carry the
+// feed's tags, since both project through the shared feed view.
+func TestEnableAndDisableReportTags(t *testing.T) {
+	app, st, _ := newTestApp(t)
+	ctx := context.Background()
+
+	const url = "https://tagged.example/feed.xml"
+	if _, err := st.AddFeed(ctx, core.Feed{
+		URL: url, Alias: "tagged", Tags: []string{"AI", "agents"}, Status: core.FeedActive,
+	}); err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	want := []string{"agents", "ai"}
+
+	disabled, err := app.Disable(ctx, feedwatch.DisableRequest{Ref: "tagged"})
+	if err != nil {
+		t.Fatalf("Disable = %v, want nil", err)
+	}
+	if !slices.Equal(disabled.Feed.Tags, want) {
+		t.Errorf("disable tags = %v, want %v", disabled.Feed.Tags, want)
+	}
+
+	enabled, err := app.Enable(ctx, feedwatch.EnableRequest{Ref: "tagged"})
+	if err != nil {
+		t.Fatalf("Enable = %v, want nil", err)
+	}
+	if !slices.Equal(enabled.Feed.Tags, want) {
+		t.Errorf("enable tags = %v, want %v", enabled.Feed.Tags, want)
+	}
 }

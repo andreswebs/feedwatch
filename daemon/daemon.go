@@ -26,6 +26,8 @@ type Scheduler struct {
 	interval    time.Duration
 	ticks       <-chan time.Time
 	pollOnStart bool
+	tags        []string
+	match       core.TagMatch
 
 	events  chan Event
 	started atomic.Bool
@@ -104,7 +106,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 func (s *Scheduler) pollOnce(ctx context.Context, ticks <-chan time.Time) bool {
 	done := make(chan Event, 1)
 	go func() {
-		res, err := s.app.Poll(ctx, feedwatch.PollRequest{})
+		res, err := s.app.Poll(ctx, feedwatch.PollRequest{Tags: s.tags, Match: string(s.match)})
 		done <- Event{At: s.clock(), Result: res, Err: err}
 	}()
 

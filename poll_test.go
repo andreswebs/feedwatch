@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/core"
@@ -14,11 +15,15 @@ import (
 
 // pollFeed is one seeded subscription and the items its wire body carries. A
 // non-nil fetchErr makes the feed fail instead, which is how a test drives the
-// failure lifecycle.
+// failure lifecycle. tags places the feed in a lane, and notDue schedules it
+// into the future so an unforced poll leaves it out.
 type pollFeed struct {
 	url      string
 	items    []core.Item
 	fetchErr error
+	tags     []string
+	notDue   bool
+	disabled bool
 }
 
 // wireItem builds a parsed wire item with a stable dedup key.
@@ -29,7 +34,7 @@ func wireItem(key, title string) core.Item {
 // newPollApp builds an App over an in-memory store with programmable network
 // collaborators and the given configuration overrides applied to Defaults, then
 // seeds each feed as an active subscription whose fetch returns its items.
-func newPollApp(t *testing.T, tune func(*feedwatch.Config), warn feedwatch.Warner, feeds ...pollFeed) (*feedwatch.App, *testsupport.InMemoryStore) {
+func newPollApp(t *testing.T, tune func(*feedwatch.Config), warn feedwatch.Warner, feeds ...pollFeed) (*feedwatch.App, *testsupport.InMemoryStore, *testsupport.FakeFetcher) {
 	t.Helper()
 
 	clk := testsupport.FixedClock(fixedTestTime())
@@ -58,7 +63,15 @@ func newPollApp(t *testing.T, tune func(*feedwatch.Config), warn feedwatch.Warne
 	t.Cleanup(func() { _ = app.Close() })
 
 	for _, f := range feeds {
-		if _, err := st.AddFeed(context.Background(), core.Feed{URL: f.url}); err != nil {
+		seed := core.Feed{URL: f.url, Tags: f.tags, Status: core.FeedActive}
+		if f.notDue {
+			due := fixedTestTime().Add(time.Hour)
+			seed.NextDueAt = &due
+		}
+		if f.disabled {
+			seed.Status = core.FeedDisabled
+		}
+		if _, err := st.AddFeed(context.Background(), seed); err != nil {
 			t.Fatalf("AddFeed(%s): %v", f.url, err)
 		}
 		if f.fetchErr != nil {
@@ -68,11 +81,11 @@ func newPollApp(t *testing.T, tune func(*feedwatch.Config), warn feedwatch.Warne
 		fetcher.Register(f.url, core.FetchResult{Status: 200, MIMEType: "application/rss+xml", Body: []byte("<rss/>")})
 		parser.Register(f.url, core.ParsedFeed{Title: "Feed", Items: f.items})
 	}
-	return app, st
+	return app, st, fetcher
 }
 
 func TestPollReportsConsistentCountsAndEmptyFailures(t *testing.T) {
-	app, _ := newPollApp(t, nil, nil, pollFeed{
+	app, _, _ := newPollApp(t, nil, nil, pollFeed{
 		url:   "https://a.example/feed.xml",
 		items: []core.Item{wireItem("i1", "One"), wireItem("i2", "Two")},
 	})
@@ -102,7 +115,7 @@ func TestPollReportsConsistentCountsAndEmptyFailures(t *testing.T) {
 }
 
 func TestPollSecondRunOfUnchangedFeedReportsNothingNew(t *testing.T) {
-	app, _ := newPollApp(t, nil, nil, pollFeed{
+	app, _, _ := newPollApp(t, nil, nil, pollFeed{
 		url:   "https://a.example/feed.xml",
 		items: []core.Item{wireItem("i1", "One")},
 	})
@@ -138,7 +151,7 @@ func TestPollRaisesOneAdvisoryWhenAFeedIsAutoDisabled(t *testing.T) {
 	const url = "https://flaky.example/feed.xml"
 
 	var got []advisory
-	app, st := newPollApp(t,
+	app, st, _ := newPollApp(t,
 		func(c *feedwatch.Config) { c.FailureThreshold = 1 },
 		func(code, message, hint string, details any) {
 			got = append(got, advisory{code, message, hint, details})
@@ -253,5 +266,196 @@ func TestPollReturnsZeroResultWhenTheStoreCannotBeOpened(t *testing.T) {
 	}
 	if !errors.Is(err, core.ErrStoreUnavailable) {
 		t.Errorf("error = %v, want a store-unavailable failure", err)
+	}
+}
+
+// laneFeeds is the lane fixture every tag-scoped poll test varies from: a feed
+// in two lanes, a feed in one, and an untagged feed, each carrying one item.
+func laneFeeds() (both, one, none pollFeed) {
+	return pollFeed{
+			url: "https://both.example/feed.xml", tags: []string{"ai", "agents"},
+			items: []core.Item{wireItem("b1", "Both")},
+		},
+		pollFeed{
+			url: "https://one.example/feed.xml", tags: []string{"ai"},
+			items: []core.Item{wireItem("o1", "One")},
+		},
+		pollFeed{
+			url:   "https://none.example/feed.xml",
+			items: []core.Item{wireItem("n1", "None")},
+		}
+}
+
+// TestPollForceScopesToTheLane is the tracer bullet: a forced poll narrowed by
+// --tag fetches exactly the in-lane feeds and never dials the others.
+func TestPollForceScopesToTheLane(t *testing.T) {
+	both, one, none := laneFeeds()
+	app, _, fetcher := newPollApp(t, nil, nil, both, one, none)
+
+	res, err := app.Poll(context.Background(), feedwatch.PollRequest{Force: true, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+	if res.Polled != 2 {
+		t.Errorf("polled = %d, want 2 in-lane feeds", res.Polled)
+	}
+	if n := len(fetcher.Requests(none.url)); n != 0 {
+		t.Errorf("out-of-lane feed was fetched %d time(s), want 0", n)
+	}
+}
+
+// TestPollTagNarrowsTheDueSelection covers behavior 2: --tag narrows the due
+// selection rather than implying --force, so a lane runs on its own cadence.
+func TestPollTagNarrowsTheDueSelection(t *testing.T) {
+	both, one, none := laneFeeds()
+	one.notDue = true
+	app, _, fetcher := newPollApp(t, nil, nil, both, one, none)
+
+	res, err := app.Poll(context.Background(), feedwatch.PollRequest{Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+	if res.Polled != 1 {
+		t.Errorf("polled = %d, want only the due in-lane feed", res.Polled)
+	}
+	if n := len(fetcher.Requests(one.url)); n != 0 {
+		t.Errorf("undue in-lane feed was fetched %d time(s), want 0", n)
+	}
+	if n := len(fetcher.Requests(none.url)); n != 0 {
+		t.Errorf("due out-of-lane feed was fetched %d time(s), want 0", n)
+	}
+}
+
+// TestPollSkippedCountsAgainstTheLane covers behavior 3: skipped is measured
+// against the lane, not the whole store, so it never reports feeds that were
+// never candidates.
+func TestPollSkippedCountsAgainstTheLane(t *testing.T) {
+	both, one, none := laneFeeds()
+	one.notDue = true
+	app, _, _ := newPollApp(t, nil, nil, both, one, none)
+
+	res, err := app.Poll(context.Background(), feedwatch.PollRequest{Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+	if res.Polled != 1 || res.Skipped != 1 {
+		t.Errorf("polled/skipped = %d/%d, want 1/1 against the two-feed lane", res.Polled, res.Skipped)
+	}
+}
+
+// TestPollMultiTagMatch covers behavior 4: several tags intersect by default
+// and union under --match any.
+func TestPollMultiTagMatch(t *testing.T) {
+	tests := []struct {
+		name  string
+		match string
+		want  int
+	}{
+		{"default matches all tags", "", 1},
+		{"match all is spelled explicitly", "all", 1},
+		{"match any unions the lanes", "any", 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			both, one, none := laneFeeds()
+			app, _, _ := newPollApp(t, nil, nil, both, one, none)
+
+			res, err := app.Poll(context.Background(), feedwatch.PollRequest{
+				Force: true, Tags: []string{"ai", "agents"}, Match: tt.match,
+			})
+			if err != nil {
+				t.Fatalf("Poll = %v, want nil", err)
+			}
+			if res.Polled != tt.want {
+				t.Errorf("polled = %d, want %d", res.Polled, tt.want)
+			}
+		})
+	}
+}
+
+// TestPollDisabledFeedInLaneIsSkipped covers behavior 9: status filtering comes
+// first, so a disabled feed carrying the tag is still left alone.
+func TestPollDisabledFeedInLaneIsSkipped(t *testing.T) {
+	both, one, none := laneFeeds()
+	one.disabled = true
+	app, _, fetcher := newPollApp(t, nil, nil, both, one, none)
+
+	res, err := app.Poll(context.Background(), feedwatch.PollRequest{Force: true, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+	if res.Polled != 1 {
+		t.Errorf("polled = %d, want only the active in-lane feed", res.Polled)
+	}
+	if n := len(fetcher.Requests(one.url)); n != 0 {
+		t.Errorf("disabled in-lane feed was fetched %d time(s), want 0", n)
+	}
+}
+
+// TestPollRejectsTagWithNamedFeeds covers behavior 5: naming feeds and naming a
+// lane are two different selections, so combining them is a usage error that
+// fetches nothing rather than a silent narrowing.
+func TestPollRejectsTagWithNamedFeeds(t *testing.T) {
+	both, one, none := laneFeeds()
+	app, _, fetcher := newPollApp(t, nil, nil, both, one, none)
+	req := feedwatch.PollRequest{Feeds: []string{both.url}, Tags: []string{"ai"}}
+
+	wantUsageError(t, req.Validate(), pollTagAndFeedsMessage)
+
+	res, err := app.Poll(context.Background(), req)
+	wantUsageError(t, err, pollTagAndFeedsMessage)
+	if res.Polled != 0 {
+		t.Errorf("polled = %d, want 0 so no envelope is rendered", res.Polled)
+	}
+	if n := len(fetcher.Requests(both.url)); n != 0 {
+		t.Errorf("feed was fetched %d time(s), want 0 on a rejected poll", n)
+	}
+}
+
+// pollTagAndFeedsMessage is the usage message rejecting --tag alongside named
+// feeds, pinned here so the library and CLI tests cannot drift from each other.
+const pollTagAndFeedsMessage = "--tag cannot be combined with named feeds; " +
+	"name feeds to poll exactly those, or use --tag to poll a lane"
+
+// TestPollRejectsInvalidTagSelection covers behavior 10: the shared tag filter
+// rejects an unknown --match value and an unstorable tag name.
+func TestPollRejectsInvalidTagSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		req  feedwatch.PollRequest
+		msg  string
+	}{
+		{"unknown match", feedwatch.PollRequest{Tags: []string{"ai"}, Match: "bogus"}, `match must be 'all' or 'any', got "bogus"`},
+		{"tag with whitespace", feedwatch.PollRequest{Tags: []string{"a b"}}, `tag must not contain whitespace, got "a b"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			both, one, none := laneFeeds()
+			app, _, fetcher := newPollApp(t, nil, nil, both, one, none)
+
+			wantUsageError(t, tt.req.Validate(), tt.msg)
+
+			_, err := app.Poll(context.Background(), tt.req)
+			wantUsageError(t, err, tt.msg)
+			if n := len(fetcher.Requests(both.url)); n != 0 {
+				t.Errorf("feed was fetched %d time(s), want 0 on a rejected poll", n)
+			}
+		})
+	}
+}
+
+// TestPollWithoutTagsIsUnchanged covers behavior 6: the untagged scheduled poll
+// still targets every due active feed, whatever lanes they carry.
+func TestPollWithoutTagsIsUnchanged(t *testing.T) {
+	both, one, none := laneFeeds()
+	one.notDue = true
+	app, _, _ := newPollApp(t, nil, nil, both, one, none)
+
+	res, err := app.Poll(context.Background(), feedwatch.PollRequest{})
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+	if res.Polled != 2 || res.Skipped != 1 {
+		t.Errorf("polled/skipped = %d/%d, want 2/1 across the whole store", res.Polled, res.Skipped)
 	}
 }

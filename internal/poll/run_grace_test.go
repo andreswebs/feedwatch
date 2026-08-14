@@ -124,7 +124,7 @@ func TestRunUninterruptedPersistsWithoutDeadline(t *testing.T) {
 		FailureThreshold: 10,
 		MaxBackoff:       24 * time.Hour,
 	}
-	_, _, err := Run(context.Background(), d, nil, false)
+	_, _, err := Run(context.Background(), d, nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

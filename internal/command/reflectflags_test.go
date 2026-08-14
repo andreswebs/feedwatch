@@ -324,18 +324,20 @@ type requestSurfaceCase struct {
 // when a use case is added; TestRequestSurfaceCoverage fails until you do.
 func requestSurfaceCases() []requestSurfaceCase {
 	return []requestSurfaceCase{
-		{"add", feedwatch.AddRequest{}, 2, 1},
-		{"check", feedwatch.CheckRequest{}, 0, 1},
+		{"add", feedwatch.AddRequest{}, 3, 1},
+		{"check", feedwatch.CheckRequest{}, 2, 1},
 		{"disable", feedwatch.DisableRequest{}, 0, 1},
 		{"discover", feedwatch.DiscoverRequest{}, 0, 1},
 		{"enable", feedwatch.EnableRequest{}, 0, 1},
-		{"export", feedwatch.ExportRequest{}, 0, 0},
+		{"export", feedwatch.ExportRequest{}, 2, 0},
 		{"import", feedwatch.ImportRequest{}, 0, 0},
-		{"items", feedwatch.ItemsRequest{}, 9, 0},
-		{"list", feedwatch.ListRequest{}, 0, 0},
-		{"poll", feedwatch.PollRequest{}, 1, 1},
-		{"prune", feedwatch.PruneRequest{}, 2, 0},
-		{"rm", feedwatch.RemoveRequest{}, 0, 1},
+		{"items", feedwatch.ItemsRequest{}, 11, 0},
+		{"list", feedwatch.ListRequest{}, 2, 0},
+		{"poll", feedwatch.PollRequest{}, 3, 1},
+		{"prune", feedwatch.PruneRequest{}, 4, 0},
+		{"rm", feedwatch.RemoveRequest{}, 2, 1},
+		{"tag", feedwatch.TagRequest{}, 4, 1},
+		{"tags", feedwatch.TagsRequest{}, 0, 0},
 	}
 }
 

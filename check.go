@@ -13,16 +13,33 @@ import (
 
 // CheckRequest selects the feeds to validate. An empty Feeds targets every
 // active feed; naming feeds targets exactly those, by URL or alias, regardless
-// of status.
+// of status. Tags narrows the active selection to a lane, matching poll's
+// selection rules so the two commands answer "which feeds" identically.
 type CheckRequest struct {
 	Feeds []string `arg:"feed" variadic:"true"`
+	Tags  []string `flag:"tag" usage:"check only feeds carrying this tag (repeatable); cannot be combined with named feeds"`
+	Match string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
 }
 
-// Validate reports whether the request is usable. Every field is optional, so it
-// always succeeds; the method exists so every request type is validated
-// uniformly by a frontend. An unknown feed reference is a store-resolution
-// failure rather than a syntactic one, so it surfaces from Check.
-func (r CheckRequest) Validate() error { return nil }
+// Validate reports whether the request is usable. Naming feeds and naming a lane
+// are two different selections, so combining them is rejected rather than
+// silently resolved in favor of one. An unknown feed reference is a
+// store-resolution failure rather than a syntactic one, so it surfaces from
+// Check.
+func (r CheckRequest) Validate() error {
+	_, err := r.filter()
+	return err
+}
+
+// filter resolves the request into the store filter that narrows the targets,
+// so Validate and Check state the rules once and cannot drift.
+func (r CheckRequest) filter() (core.ListFilter, error) {
+	if len(r.Tags) > 0 && len(r.Feeds) > 0 {
+		return core.ListFilter{}, usageErr("--tag cannot be combined with named feeds; " +
+			"name feeds to check exactly those, or use --tag to check a lane")
+	}
+	return tagFilter(r.Tags, r.Match)
+}
 
 // CheckFailure is one failed feed in the check envelope: the feed URL, its
 // error category, the HTTP status when the category is http (omitted
@@ -78,7 +95,8 @@ func (r CheckResult) ExitCode() int {
 // parse failure is per-feed result data instead: it is reported in Failures and
 // never cancels the sibling checks.
 func (a *App) Check(ctx context.Context, req CheckRequest) (CheckResult, error) {
-	if err := req.Validate(); err != nil {
+	filter, err := req.filter()
+	if err != nil {
 		return CheckResult{}, err
 	}
 	st, err := a.resolveStore(ctx)
@@ -91,7 +109,7 @@ func (a *App) Check(ctx context.Context, req CheckRequest) (CheckResult, error) 
 	}
 	parser := a.resolveParser()
 
-	feeds, err := checkTargets(ctx, st, req.Feeds)
+	feeds, err := checkTargets(ctx, st, req.Feeds, filter)
 	if err != nil {
 		return CheckResult{}, err
 	}
@@ -133,12 +151,15 @@ func (a *App) Check(ctx context.Context, req CheckRequest) (CheckResult, error) 
 	return res, nil
 }
 
-// checkTargets resolves the feeds a check targets: the named references, or
-// every active feed when none were named. An unresolvable reference propagates,
-// so a typo aborts the check rather than silently narrowing it.
-func checkTargets(ctx context.Context, st store.Store, names []string) ([]core.Feed, error) {
+// checkTargets resolves the feeds a check targets: the named references, or the
+// active feeds the filter selects when none were named. An unresolvable
+// reference propagates, so a typo aborts the check rather than silently
+// narrowing it. Status filtering stays first, so a disabled feed carrying the
+// lane's tag is still skipped.
+func checkTargets(ctx context.Context, st store.Store, names []string, filter core.ListFilter) ([]core.Feed, error) {
 	if len(names) == 0 {
-		return st.ListFeeds(ctx, core.ListFilter{Status: core.FeedActive})
+		filter.Status = core.FeedActive
+		return st.ListFeeds(ctx, filter)
 	}
 	feeds := make([]core.Feed, 0, len(names))
 	for _, ref := range names {

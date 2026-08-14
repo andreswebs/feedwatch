@@ -93,7 +93,7 @@ func TestRecordFailureDisablesAtThreshold(t *testing.T) {
 		t.Errorf("Status = %q, want disabled", f.Status)
 	}
 
-	due, err := s.DueFeeds(ctx, testNow.Add(365*24*time.Hour))
+	due, err := s.DueFeeds(ctx, testNow.Add(365*24*time.Hour), core.ListFilter{})
 	if err != nil {
 		t.Fatalf("DueFeeds: %v", err)
 	}

@@ -1,6 +1,6 @@
 ---
 id: fee-47yv
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq]
 links: []
 created: 2026-08-14T02:46:34Z
@@ -171,3 +171,15 @@ feedwatch_test`, `newTestApp`/`newNetworkApp` helpers); CLI tests in
 - `listEnvelope` and the `feedViewProps`/`feedViewReq` expectations in
   `schema_test.go` are updated.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:38:15Z**
+
+Implemented both halves. FeedView gained a non-omitempty Tags []string with its own MarshalJSON coalescing nil to [], so list, enable, and disable all report tags; ListResult.RenderText gained a TAGS column (comma-joined, dash when empty). AddRequest gained a repeatable --tag validated in Validate via core.ValidateTags before any fetch or store call; AddResult reports the resulting tags with omitempty. Omitted-preserves/given-replaces works through the store's upsert (which ignores tags on re-add) plus a single SetTags+GetFeed branch when tags are given.
+
+One deviation from the ticket: behavior 6's CLI half. 'add URL --tag "a,b"' cannot exit 64 because urfave splits []string flags on commas before Validate runs, and the feed-tags plan documents --tag a,b as identical to --tag a --tag b. The comma rule in core.ValidateTags guards library callers instead. The CLI test now pins that equivalence (TestAddTagCommaSpellingIsRepeatedSpelling) and the empty-tag rejection; the library test keeps the comma rejection. Rejecting it at the CLI would require breaking the documented spelling rule.
+
+Also fixed two goldens that were stale before this ticket (migrate_status.stdout and err/schema_too_new.stderr still carried store schema version 1 after the tags migration bumped it to 2). They passed the opening make build only from the go test cache.
+
+Predicted gotcha hit: enable_test.go compared FeedView with !=, which a slice field makes illegal; switched to reflect.DeepEqual. Regenerated goldens for schema list/enable/disable/add/all, help/add, and lifecycle/list; confirmed the add behavioral goldens are unchanged. make build passes.

@@ -21,11 +21,11 @@ type flakyDueStore struct {
 	failed atomic.Bool
 }
 
-func (s *flakyDueStore) DueFeeds(ctx context.Context, now time.Time) ([]core.Feed, error) {
+func (s *flakyDueStore) DueFeeds(ctx context.Context, now time.Time, f core.ListFilter) ([]core.Feed, error) {
 	if s.failed.CompareAndSwap(false, true) {
 		return nil, errors.New("simulated store failure")
 	}
-	return s.Store.DueFeeds(ctx, now)
+	return s.Store.DueFeeds(ctx, now, f)
 }
 
 // fixedTestTime is the instant every scheduler test runs at, so due
@@ -80,6 +80,155 @@ func seedFeeds(t *testing.T, st *testsupport.InMemoryStore, urls ...string) []fe
 		}})
 	}
 	return []feedwatch.Option{feedwatch.WithFetcher(fetcher), feedwatch.WithParser(parser)}
+}
+
+// seedLane subscribes each URL in feeds with its tag set and returns the fetcher
+// alongside the collaborator options, so a test can assert which feeds a
+// lane-scoped poll actually reached.
+func seedLane(t *testing.T, st *testsupport.InMemoryStore, feeds map[string][]string) (*testsupport.FakeFetcher, []feedwatch.Option) {
+	t.Helper()
+
+	fetcher := testsupport.NewFakeFetcher()
+	parser := testsupport.NewFakeParser()
+	for url, tags := range feeds {
+		if _, err := st.AddFeed(context.Background(), core.Feed{URL: url, Tags: tags}); err != nil {
+			t.Fatalf("AddFeed(%s) = %v, want nil", url, err)
+		}
+		fetcher.Register(url, core.FetchResult{Status: 200, MIMEType: "application/rss+xml", Body: []byte("<rss/>")})
+		parser.Register(url, core.ParsedFeed{Title: "Feed", Items: []core.Item{
+			{DedupKey: url + "#1", Title: "One", Link: url + "/1"},
+		}})
+	}
+	return fetcher, []feedwatch.Option{feedwatch.WithFetcher(fetcher), feedwatch.WithParser(parser)}
+}
+
+func TestSchedulerWithTagsPollsOnlyTheLane(t *testing.T) {
+	const inLane, outOfLane = "https://ai.example/feed.xml", "https://other.example/feed.xml"
+	st := testsupport.NewInMemoryStore(testsupport.FixedClock(fixedTestTime()))
+	fetcher, opts := seedLane(t, st, map[string][]string{
+		inLane:    {"ai"},
+		outOfLane: {"cooking"},
+	})
+	app := newApp(t, st, opts...)
+	ticks := make(chan time.Time)
+	s := daemon.New(app, daemon.WithTicks(ticks), daemon.WithTags("ai"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	ticks <- fixedTestTime()
+	ev := <-s.Events()
+	if ev.Err != nil {
+		t.Fatalf("event error = %v, want nil", ev.Err)
+	}
+	if ev.Result.Polled != 1 {
+		t.Errorf("polled = %d, want 1: the scheduler left its lane", ev.Result.Polled)
+	}
+	if got := fetcher.Requests(outOfLane); len(got) != 0 {
+		t.Errorf("fetched the out-of-lane feed %d time(s), want 0", len(got))
+	}
+}
+
+func TestSchedulerWithMatchAnyWidensTheLane(t *testing.T) {
+	feeds := map[string][]string{
+		"https://ai.example/feed.xml":     {"ai"},
+		"https://agents.example/feed.xml": {"agents"},
+		"https://other.example/feed.xml":  {"cooking"},
+	}
+
+	for _, tt := range []struct {
+		name string
+		opts []daemon.Option
+		want int
+	}{
+		{"default match all", []daemon.Option{daemon.WithTags("ai", "agents")}, 0},
+		{"match any", []daemon.Option{daemon.WithTags("ai", "agents"), daemon.WithMatch(core.MatchAny)}, 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := testsupport.NewInMemoryStore(testsupport.FixedClock(fixedTestTime()))
+			_, opts := seedLane(t, st, feeds)
+			app := newApp(t, st, opts...)
+			ticks := make(chan time.Time)
+			s := daemon.New(app, append([]daemon.Option{daemon.WithTicks(ticks)}, tt.opts...)...)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() { _ = s.Run(ctx) }()
+
+			ticks <- fixedTestTime()
+			ev := <-s.Events()
+			if ev.Err != nil {
+				t.Fatalf("event error = %v, want nil", ev.Err)
+			}
+			if ev.Result.Polled != tt.want {
+				t.Errorf("polled = %d, want %d", ev.Result.Polled, tt.want)
+			}
+		})
+	}
+}
+
+func TestSchedulerWithoutALanePollsEveryFeed(t *testing.T) {
+	feeds := map[string][]string{
+		"https://ai.example/feed.xml":    {"ai"},
+		"https://other.example/feed.xml": {"cooking"},
+	}
+
+	for _, tt := range []struct {
+		name string
+		opts []daemon.Option
+	}{
+		{"no WithTags at all", nil},
+		{"WithTags with no arguments", []daemon.Option{daemon.WithTags()}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			st := testsupport.NewInMemoryStore(testsupport.FixedClock(fixedTestTime()))
+			_, opts := seedLane(t, st, feeds)
+			app := newApp(t, st, opts...)
+			ticks := make(chan time.Time)
+			s := daemon.New(app, append([]daemon.Option{daemon.WithTicks(ticks)}, tt.opts...)...)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			go func() { _ = s.Run(ctx) }()
+
+			ticks <- fixedTestTime()
+			ev := <-s.Events()
+			if ev.Err != nil {
+				t.Fatalf("event error = %v, want nil", ev.Err)
+			}
+			if ev.Result.Polled != len(feeds) {
+				t.Errorf("polled = %d, want %d", ev.Result.Polled, len(feeds))
+			}
+		})
+	}
+}
+
+func TestSchedulerInvalidTagSurfacesAsEventErrorAndKeepsRunning(t *testing.T) {
+	st := testsupport.NewInMemoryStore(testsupport.FixedClock(fixedTestTime()))
+	_, opts := seedLane(t, st, map[string][]string{"https://a.example/feed.xml": {"ai"}})
+	app := newApp(t, st, opts...)
+	ticks := make(chan time.Time)
+	s := daemon.New(app, daemon.WithTicks(ticks), daemon.WithTags("not a tag"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+
+	for i := range 2 {
+		ticks <- fixedTestTime()
+		ev := <-s.Events()
+		if ev.Err == nil {
+			t.Fatalf("event %d error = nil, want the invalid-tag usage error", i)
+		}
+		var fe *core.FeedError
+		if !errors.As(ev.Err, &fe) || fe.Category != core.CatUsage {
+			t.Errorf("event %d error = %v, want a usage-category error", i, ev.Err)
+		}
+		if ev.Result.Polled != 0 {
+			t.Errorf("event %d polled = %d, want 0", i, ev.Result.Polled)
+		}
+	}
 }
 
 func TestSchedulerPublishesOneEventPerTick(t *testing.T) {

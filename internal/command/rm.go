@@ -9,11 +9,12 @@ import (
 )
 
 // rmCommand registers the rm subcommand: unsubscribe a feed resolved by its
-// exact URL or unique alias, cascading to its stored items.
+// exact URL or unique alias, or every feed in a lane, cascading to their stored
+// items.
 func (d Deps) rmCommand() *cliv3.Command {
 	return &cliv3.Command{
 		Name:      "rm",
-		Usage:     "unsubscribe a feed by URL or unique alias, removing its stored items",
+		Usage:     "unsubscribe a feed by URL or unique alias, or a whole lane by tag, removing their stored items",
 		ArgsUsage: "URL|ALIAS",
 		Arguments: argsFor(feedwatch.RemoveRequest{}),
 		Flags:     flagsFor(feedwatch.RemoveRequest{}),
@@ -22,8 +23,9 @@ func (d Deps) rmCommand() *cliv3.Command {
 }
 
 // rmAction delegates to the library's rm use case and renders its envelope. An
-// unknown ref is a usage failure (exit 64); a store failure propagates to the
-// boundary as a hard error.
+// unknown ref, and naming both a feed and a lane or neither, are usage failures
+// (exit 64) that remove nothing; a store failure propagates to the boundary as a
+// hard error. A lane no feed carries exits 0 having removed nothing.
 func (d Deps) rmAction(ctx context.Context, cmd *cliv3.Command) error {
 	app, err := d.app(ctx)
 	if err != nil {

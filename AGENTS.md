@@ -30,7 +30,7 @@ Load these on demand for the task at hand:
 | CLI usage reference (commands, flags)  | [docs/usage.md](docs/usage.md)               |
 | Embedding the library (public API)     | [docs/library.md](docs/library.md)           |
 | Manual QA plan (full CLI surface)      | [docs/specs/001-initial-implementation/manual-qa.md](docs/specs/001-initial-implementation/manual-qa.md)       |
-| Implementation learnings, newest last  | [docs/specs/001-initial-implementation/learnings.md](docs/specs/001-initial-implementation/learnings.md)       |
+| Implementation learnings, newest last  | [docs/specs/learnings.md](docs/specs/learnings.md)       |
 
 When you solve a non-obvious problem or make a design decision during a ticket,
-append it to [docs/specs/001-initial-implementation/learnings.md](docs/specs/001-initial-implementation/learnings.md) under that ticket's heading.
+append it to [docs/specs/learnings.md](docs/specs/learnings.md) under that ticket's heading.

@@ -91,8 +91,8 @@ func TestSchemaListsAllCommands(t *testing.T) {
 	}
 
 	want := []string{
-		"migrate", "poll", "add", "list", "rm", "enable", "disable",
-		"items", "prune", "discover", "import", "export", "schema",
+		"migrate", "poll", "add", "list", "rm", "enable", "disable", "tag",
+		"tags", "items", "prune", "discover", "import", "export", "schema",
 	}
 	for _, name := range want {
 		if !got[name] {
@@ -382,8 +382,8 @@ func equalStrings(a, b []string) bool {
 // reflection migration changed no meaning, save the one documented tightening
 // (import's failed element gains required xmlUrl/reason).
 func TestOutputSchemaContractPreserved(t *testing.T) {
-	feedViewProps := []string{"url", "alias", "interval", "status", "failures", "last_error"}
-	feedViewReq := []string{"url", "status", "failures"}
+	feedViewProps := []string{"url", "alias", "interval", "tags", "status", "failures", "last_error"}
+	feedViewReq := []string{"url", "status", "failures", "tags"}
 
 	// head is the schema_version/ok pair that opens every envelope; it is
 	// required and appears at the top level of each reflected result.
@@ -396,12 +396,14 @@ func TestOutputSchemaContractPreserved(t *testing.T) {
 		props    []string
 		required []string
 	}{
-		"add":      {withHead("url", "alias", "interval", "created"), withHead("url", "created")},
+		"add":      {withHead("url", "alias", "interval", "tags", "created"), withHead("url", "created")},
 		"list":     {withHead("feeds"), withHead("feeds")},
 		"rm":       {withHead("removed"), withHead("removed")},
 		"enable":   {withHead("feed"), withHead("feed")},
 		"disable":  {withHead("feed"), withHead("feed")},
 		"prune":    {withHead("pruned"), withHead("pruned")},
+		"tag":      {withHead("url", "tags", "added", "removed"), withHead("url", "tags", "added", "removed")},
+		"tags":     {withHead("tags"), withHead("tags")},
 		"items":    {withHead("items", "omitted_no_date"), withHead("items")},
 		"poll":     {withHead("polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed"), withHead("polled", "succeeded", "failed", "skipped", "fetched", "new_items", "deduped", "items", "failures", "renamed")},
 		"discover": {withHead("candidates"), withHead("candidates")},

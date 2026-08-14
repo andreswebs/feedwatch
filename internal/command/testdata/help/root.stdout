@@ -9,10 +9,12 @@ COMMANDS:
    poll      poll due feeds (or the named feeds) and report new items
    check     validate feed reachability and parseability without storing items or updating state
    add       subscribe to an explicit feed URL after validating it parses as a feed
-   list      list subscriptions with status, alias, failure count, and last error
-   rm        unsubscribe a feed by URL or unique alias, removing its stored items
+   list      list subscriptions with status, alias, tags, failure count, and last error
+   rm        unsubscribe a feed by URL or unique alias, or a whole lane by tag, removing their stored items
    enable    re-enable a disabled feed and reset its failure lifecycle so it is due again
    disable   disable a feed so poll skips it until re-enabled
+   tag       read or edit the tags on a subscription
+   tags      list every tag in use with the number of feeds carrying it
    items     query stored item history with filters, ordering, and pagination
    prune     trim stored item history by age and/or per-feed count, preserving dedup
    discover  list candidate feeds autodiscovered or probed from a URL (read-only)

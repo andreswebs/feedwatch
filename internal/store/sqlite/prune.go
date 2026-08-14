@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/andreswebs/feedwatch/core"
 )
@@ -14,12 +15,19 @@ import (
 // deleted here. Returns the number of rows newly tombstoned.
 func (s *Store) PruneItems(ctx context.Context, p core.PrunePolicy) (int, error) {
 	var total int
+	scope, scopeArgs := feedTagScope(p.Tags, p.Match)
 
 	if p.KeepBefore != nil {
-		res, err := s.db.ExecContext(ctx,
-			`UPDATE items SET tombstoned = 1, content_html = '', content_text = '', summary = ''
-			 WHERE tombstoned = 0 AND COALESCE(published_at, fetched_at) < ?`,
-			formatTime(*p.KeepBefore))
+		var b strings.Builder
+		b.WriteString(`UPDATE items SET tombstoned = 1, content_html = '', content_text = '', summary = ''
+			 WHERE tombstoned = 0 AND COALESCE(published_at, fetched_at) < ?`)
+		args := []any{formatTime(*p.KeepBefore)}
+		if scope != "" {
+			b.WriteString(" AND ")
+			b.WriteString(scope)
+			args = append(args, scopeArgs...)
+		}
+		res, err := s.db.ExecContext(ctx, b.String(), args...)
 		if err != nil {
 			return total, fmt.Errorf("prune by age: %w", err)
 		}
@@ -28,18 +36,38 @@ func (s *Store) PruneItems(ctx context.Context, p core.PrunePolicy) (int, error)
 	}
 
 	if p.MaxPerFeed > 0 {
-		res, err := s.db.ExecContext(ctx,
-			`UPDATE items SET tombstoned = 1, content_html = '', content_text = '', summary = ''
-			 WHERE tombstoned = 0 AND rowid IN (
+		// The scope is applied twice: once on the rows being tombstoned and once
+		// on the window's source. Scoping only the outer statement would still
+		// rank each in-lane feed's rows against out-of-lane rows, so the rn > N
+		// cutoff would fall in the wrong place. Arguments are appended in clause
+		// order, so the scope's arguments appear twice too.
+		var b strings.Builder
+		var args []any
+		b.WriteString(`UPDATE items SET tombstoned = 1, content_html = '', content_text = '', summary = ''
+			 WHERE tombstoned = 0`)
+		if scope != "" {
+			b.WriteString(" AND ")
+			b.WriteString(scope)
+			args = append(args, scopeArgs...)
+		}
+		b.WriteString(` AND rowid IN (
 				SELECT rowid FROM (
 					SELECT rowid, ROW_NUMBER() OVER (
 						PARTITION BY feed_url
 						ORDER BY COALESCE(published_at, fetched_at) DESC, dedup_key DESC
 					) AS rn
-					FROM items WHERE tombstoned = 0
+					FROM items WHERE tombstoned = 0`)
+		if scope != "" {
+			b.WriteString(" AND ")
+			b.WriteString(scope)
+			args = append(args, scopeArgs...)
+		}
+		b.WriteString(`
 				) WHERE rn > ?
-			 )`,
-			p.MaxPerFeed)
+			 )`)
+		args = append(args, p.MaxPerFeed)
+
+		res, err := s.db.ExecContext(ctx, b.String(), args...)
 		if err != nil {
 			return total, fmt.Errorf("prune by max-per-feed: %w", err)
 		}

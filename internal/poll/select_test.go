@@ -29,7 +29,7 @@ func TestSelectFeedsDueOnlySkipsNonDue(t *testing.T) {
 
 	d := Deps{Store: store, Clock: clk}
 
-	got, err := selectFeeds(context.Background(), d, nil, false)
+	got, err := selectFeeds(context.Background(), d, nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("selectFeeds: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestSelectFeedsForceIncludesNonDue(t *testing.T) {
 
 	d := Deps{Store: store, Clock: clk}
 
-	got, err := selectFeeds(context.Background(), d, nil, true)
+	got, err := selectFeeds(context.Background(), d, nil, true, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("selectFeeds force: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSelectFeedsNamedResolvesRegardlessOfDue(t *testing.T) {
 
 	d := Deps{Store: store, Clock: clk}
 
-	got, err := selectFeeds(context.Background(), d, []string{notDue}, false)
+	got, err := selectFeeds(context.Background(), d, []string{notDue}, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("selectFeeds named: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestSelectFeedsUnknownNamedIsUsageError(t *testing.T) {
 
 	d := Deps{Store: store, Clock: clk}
 
-	_, err := selectFeeds(context.Background(), d, []string{"https://nope.example/feed.xml"}, false)
+	_, err := selectFeeds(context.Background(), d, []string{"https://nope.example/feed.xml"}, false, core.ListFilter{})
 	if err == nil {
 		t.Fatal("selectFeeds with unknown ref: want error, got nil")
 	}

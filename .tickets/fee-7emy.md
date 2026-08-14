@@ -1,6 +1,6 @@
 ---
 id: fee-7emy
-status: open
+status: closed
 deps: [fee-2lbg, fee-o5uq, fee-frus]
 links: []
 created: 2026-08-14T02:49:18Z
@@ -196,3 +196,17 @@ assume.
 **2026-08-14T03:38:06Z**
 
 RmResult envelope break approved by the user (2026-08-14): removed becomes []string on every path, including single-ref rm. schema_version stays 1 - a deliberate deviation from ADR 0005's bump rule under the pre-1.0 policy, to be stated in the CHANGELOG entry rather than left implicit. Revisit at 1.0. Design and acceptance criteria updated; plan.md, the epic (fee-zs6b), and the docs ticket (fee-fxl2) updated to match.
+
+**2026-08-14T20:21:21Z**
+
+Implemented prune --tag/--match and rm --tag/--match.
+
+Library: PruneRequest gains Tags/Match, resolved in policy(now) after the bound check so a bare 'prune --tag' stays a usage error (TestPruneRequiresBound extended, not weakened). RemoveRequest gains Tags/Match plus a shared filter() that rejects ref+tag together and neither-selector; both are validated before resolveStore, so a rejected rm never opens the store. RmResult.Removed is now []string on every path with a MarshalJSON coalescing it to [], and App.Remove removes lane feeds in ListFeeds URL order.
+
+Breaking change recorded in CHANGELOG.md under ### Changed, including the explicit note that schema_version stays 1 (deliberate deviation from ADR 0005, per the pre-1.0 policy; revisit at 1.0). Stale 'removed' examples in docs/usage.md and manual-qa.md were corrected to the array shape so the documented contract is not left contradicting the code; the rest of the tags prose is still fee-fxl2's.
+
+Tests: behaviors 1-10 covered across prune_test.go, rm_test.go, internal/command/prune_test.go and internal/command/rm_test.go. Behaviors 7 and 8 assert on store state (every feed still present), not just exit 64. Goldens regenerated: schema/{prune,rm,all}.stdout, help/{prune,rm,root}.stdout; schema/rm.stdout changed structurally (removed is an array). testdata/opml/prune.stdout verified byte-identical to HEAD, confirming the untagged prune path did not move.
+
+Note for the next person: the working tree carries uncommitted golden updates from earlier tickets in this epic, so 'git diff testdata/' shows more than any one ticket touched. Do not read it against HEAD when reviewing a -update run.
+
+make build passes.

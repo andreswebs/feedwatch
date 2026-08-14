@@ -2766,3 +2766,553 @@ result stream does not already carry the signal (see fee-nkdl).
 log; `--quiet` raises the log floor only. The e2e suite runs with `--quiet` and
 still sees the `feed_auto_disabled` line, which pins the distinction for free
 (see fee-nkdl).
+
+**`strconv.Quote` escapes the value a "does the message quote the input" test
+looks for.** A tag-validation test asserting `strings.Contains(err.Error(),
+"a\tb")` failed even though the message did quote the tag, because the message
+carried the escaped `"a\\tb"`. The assertion has to be written against
+`strconv.Quote(tag)`, not the raw tag. This matters for any message that quotes
+user input containing control characters (see fee-zt9x).
+
+**`core` builds its own usage errors rather than reaching for `usageErr`.** The
+root package's `usageErr` helper lives in `prune.go` and is not importable from
+`core`, so `core/tags.go` has a small file-local `tagUsageErr` constructing
+`&FeedError{Category: CatUsage, Err: ErrUsage}` directly. The duplication is
+deliberate: promoting the helper into `core` would invert the dependency the
+package layout keeps acyclic (see fee-zt9x).
+
+**Tag filter fields were purely additive at every construction site.** Adding
+`Tags`/`Match` to `ListFilter`, `ItemQuery`, and `PrunePolicy` needed no call-site
+change, because the zero `TagMatch` is `MatchAll` and an empty tag set matches
+every feed, so today's "match everything" behavior survives untouched. That is
+what let the value layer land ahead of the store and command lanes without a
+behavior change (see fee-zt9x).
+
+**Every migration-count assertion was already written against the derived
+maximum.** Adding `0002_feed_tags.sql` bumped the schema to version 2 without
+touching a single existing test: `Pending` is compared to
+`len(loadMigrations())`, the too-new guard derives `codeMax` at runtime, and the
+golden harness stamps `MAX(version)+1`. Only two golden files moved, and both
+diffs were the version integer alone. Writing migration tests against the
+derived maximum rather than a literal is what makes each new migration a
+one-file change (see fee-c6fa).
+
+**Proving an in-place upgrade needs the unexported applier, not `Migrate`.**
+`Migrate` always runs the full set, so a test that seeds a v1-shaped row has to
+call `applyMigrations(ctx, ms[:1])` first, insert through `s.db`, then finish
+the migration. That is why the migration suite is white-box in
+`migrate_internal_test.go`, and why `openTestStore` opens a temp _file_ rather
+than `:memory:`, where each pooled connection would see its own empty database
+(see fee-c6fa).
+
+## fee-pfpz: sqlite feed tags read, write, and filtering
+
+**Omitting one column from `DO UPDATE SET` implements the whole preserve rule.**
+`AddFeed` writes `tags` in the INSERT list but deliberately not in the conflict
+clause, so creation takes the caller's tags and a re-add leaves the stored set
+untouched. That is the plan's "omitted preserves, given replaces" semantics with
+no need for the store to distinguish an empty tag set from an absent one, and no
+`*[]string` in `core.Feed`. Explicit replacement has its own path, `SetTags`.
+
+**`json_each` is the first SQL-side JSON use in the store.** Everything to date
+marshals Go-side and treats the column as opaque text, so `tagPredicate` in the
+new `internal/store/sqlite/tags.go` carries a comment saying the JSON1 functions
+ship with `modernc.org/sqlite` and need no build tag. The predicate takes the
+column name as a parameter precisely so the `items` half (fee-2lbg) can reuse it
+inside a `feed_url IN (SELECT ...)` subquery without a second copy.
+
+**Canonicalizing before building the `match=all` SQL is what makes it correct.**
+The all-match form compares `count(DISTINCT value)` against the number of
+requested tags, so `--tag AI --tag ai` would demand two matches from a feed that
+can only ever supply one. Running `core.CanonicalTags` first collapses the
+request to one tag and one expected count.
+
+**`ListFeeds` had to stop growing its WHERE incrementally.** The old code
+appended `" WHERE status = ?"` inside the status branch, which silently assumed
+status was the only possible predicate. A second optional clause makes that
+assumption a bug, so both `ListFeeds` and `DueFeeds` now build a `[]string` of
+clauses and hand them to a shared `feedQuery` helper that emits `WHERE` only
+when there is something to filter on (and `strings.Builder`, never `+`, to keep
+`gosec` G202 quiet).
+
+**The `DueFeeds` signature break cost eight call sites and no behavior.** Every
+existing caller passes `core.ListFilter{}`, whose zero value matches every feed,
+so the change is purely mechanical outside the new lane path in the store and
+the test double. `internal/testsupport` got the feeds-half parity in the same
+pass (a shared `matchesTags` helper used by both `ListFeeds` and `DueFeeds`,
+plus `SetTags` and `TagCounts`), leaving fee-o5uq the items and prune half.
+
+## fee-2lbg: sqlite item query and prune filtering by tag
+
+**One shared helper carried the clause to all three statements.** `tagPredicate`
+from fee-pfpz already took the column name as a parameter, so the items half
+only needed a thin wrapper, `feedTagScope` in `internal/store/sqlite/tags.go`,
+that wraps it as `feed_url IN (SELECT url FROM feeds WHERE <pred>)`. That one
+form drops into the item query's `nonDateFilters`, the age prune's `WHERE`, and
+both halves of the max-per-feed prune, so the SQL exists once.
+
+**A subquery beats a JOIN here for two independent reasons.** `feeds` and
+`items` both have an `updated_at` column, so `JOIN feeds ON feeds.url =
+items.feed_url` would make every reference in `itemColumns`, `alwaysColumns`,
+and `scanItem` ambiguous and force qualification across the file. Separately,
+the subquery composes into any existing `WHERE`, which is what let one clause
+serve statements with three different shapes.
+
+**Putting the clause in `nonDateFilters` is what keeps `OmittedNoDate` honest.**
+`countOmittedNoDate` rebuilds its own SQL from the same helper, so adding the
+tag clause one level up gave the dateless-exclusion count the same scope for
+free. The behavior is only observable by test: an undated item on an out-of-lane
+feed must not inflate the count.
+
+**Pagination is the reason the filter had to be in SQL.** `QueryItems` applies
+`LIMIT`/`OFFSET` in SQL, so a Go-side tag filter would page over the unfiltered
+set and then discard rows, returning short and wrongly-offset pages. The fixture
+interleaves publication times across in-lane and out-of-lane feeds precisely so
+that `Limit: 2, Offset: 2` lands on a different pair each way (`k03 k04`
+filtered versus `k02 k03` unfiltered), which makes the test a real
+discriminator rather than a tautology.
+
+**The max-per-feed prune needs the scope twice, and the inner one matters
+most.** `ROW_NUMBER() OVER (PARTITION BY feed_url ...)` ranks whatever its
+source yields; leaving `FROM items WHERE tombstoned = 0` unscoped keeps
+out-of-lane rows in the window, so the `rn > N` cutoff falls in the wrong place
+even though the outer `WHERE` would then tombstone only in-lane rows. Both
+statements were converted from hardcoded strings to `strings.Builder` plus an
+accumulating `[]any` (also what keeps `gosec` G202 quiet), and the scope's
+arguments are appended once per textual occurrence, in clause order.
+
+## fee-o5uq: testsupport InMemoryStore tag parity
+
+**Half the parity work was already there, and only reading both files revealed
+which half.** `SetTags`, `TagCounts`, the `DueFeeds` signature, and tag
+filtering in `ListFeeds` had landed with the feeds-half tickets; the items and
+prune halves had not. There is no conformance suite to point at the gap, so the
+gap was found by listing the SQLite tag test names and checking each for a twin.
+That listing is the actual verification step for a hand-maintained double, and
+it is worth doing before writing any code rather than after.
+
+**Two nil-means-all URL sets are clearer than intersecting them.** `QueryItems`
+already had `feedURLSetLocked`, whose nil return means "match all". Rather than
+merging the lane set into it, the lane resolves to a second set and both are
+tested in the per-feed loop. Nil-as-match-all does not survive intersection
+cleanly (nil ∩ set is the set, not empty), so keeping them separate avoids a
+helper whose correctness depends on remembering that asymmetry.
+
+**A feed the double has no row for is out of every lane.** The lane set is built
+from `s.feeds`, so items upserted for an unsubscribed URL (which several older
+tests do) vanish under any tag filter. That is exactly what the SQL subquery over
+`feeds` does, and it is the kind of place where an in-memory double could
+trivially be more permissive than the store and thereby lie to command tests.
+
+**Canonicalizing the requested tags at the call site is not just a
+micro-optimization.** Hoisting `core.CanonicalTags(filter.Tags)` above each loop
+made `matchesTags(feedTags, want, m)` take two plain slices, which is what let
+the same helper serve the two feed loops and the lane-set builder. The earlier
+shape took a whole `core.Feed` and could not be reused for a set built from a
+map iteration.
+
+**The re-add-preserves-tags behavior is an omission, so it needs a comment.**
+The double's existing-feed branch copies `Alias`, `Interval`, and `UpdatedAt` and
+says nothing about `Tags`. That silence is the whole implementation of "omitted
+preserves, given replaces", mirroring the SQLite upsert's `DO UPDATE SET`, and
+without a doc comment on `AddFeed` it reads as a field someone forgot.
+
+## fee-47yv: FeedView.tags and add --tag
+
+**A comma in a tag cannot be rejected through the CLI, only through the
+library.** The ticket asked for `add URL --tag "a,b"` to exit 64. It cannot:
+urfave splits a `[]string` flag on commas before `AddRequest.Validate` ever
+runs, so the request carries two well-formed tags and the add succeeds. That is
+not a bug to route around, it is the documented equivalence of the two `--tag`
+spellings in the feed-tags plan. `core.ValidateTags`'s comma rule therefore
+guards library embedders, who can pass a string the flag parser never saw. The
+CLI test pins the equivalence instead of the rejection, and the library test
+keeps the rejection; asserting the ticket's literal wording would have meant
+breaking the documented spelling rule to satisfy a test.
+
+**A non-omitempty slice field makes its struct non-comparable, which breaks
+`==` in tests, not in production.** Adding `Tags []string` to `FeedView` made
+`enable_test.go`'s `first.Feed != second.Feed` idempotency check a compile
+error. `reflect.DeepEqual` is the fix. Worth grepping for `==` on any struct
+before adding a slice field to it, since the failure is a build break in a test
+file rather than anything the type checker flags at the definition.
+
+**`tags` is required on `FeedView` and optional on `AddResult`, and that
+asymmetry is deliberate.** The reflected schema shows `tags` in `required` for
+the three `FeedView` envelopes and absent from `AddResult`'s. `FeedView` is the
+feed projection an agent parses uniformly, so the key is always present;
+`AddResult` already omits `alias` and `interval` when unset, and staying
+internally consistent matters more there than cross-command uniformity.
+
+**Two goldens were stale before this ticket and only passed via the test
+cache.** `migrate_status.stdout` and `err/schema_too_new.stderr` still carried
+store schema version 1 after the tags migration bumped it to 2. The opening
+`make build` passed because `go test` served a cached result; the first
+uncached run failed both. Regenerating them is part of this ticket only because
+it ran `-update`; the lesson is that a green `make build` on an inherited tree
+is not evidence the goldens match until something forces an uncached run.
+
+## fee-frus: list --tag and the --match pattern
+
+**The `bind` trap was real, and the tests caught it in the intended order.**
+`internal/command/list.go`'s action passed a literal `feedwatch.ListRequest{}`
+instead of calling `bind`, a habit that was harmless only while the request had
+no fields. Writing the CLI tag test first made the failure exact and immediate:
+`flag provided but not defined: -tag`, because `flagsFor` and the action are two
+independent halves and only the former is derived from the struct. `export` is
+now the last command with a literal-request action; the same fix is owed there
+the moment `ExportRequest` grows a field.
+
+**`TestRequestSurfaceMapping` is the guard that makes this class of drift
+visible.** Its hand-maintained table asserts a flag count per request type, so
+adding two flags to `ListRequest` failed it (`want 0`) before any golden did.
+It does not, however, prove the flags reach the request — only that they are
+declared. That gap is exactly what the missing `bind` lived in, so a
+behavioral test that asserts a filtered result is still required per command.
+
+**`tagFilter` deliberately validates `--match` even when no tag is named.**
+`list --match bogus` with no `--tag` is a usage error rather than a silent
+no-op, because a caller that misspells the match value has a bug whether or not
+the selection is currently empty. The alternative (skip validation when
+`Tags` is empty) would make the same typo fail loudly or silently depending on
+an unrelated flag.
+
+**`ListRequest.Validate` and `App.List` both route through `filter()`, so the
+use case never calls `Validate` directly.** `App.List` calls `req.filter()`
+once and uses its result, which validates as a side effect; calling `Validate`
+first would parse the same selection twice. This mirrors how `ItemsRequest`
+resolves through `query`, and it is the shape T10-T12 should copy: one resolver
+method, `Validate` discarding its result, the use case keeping it.
+
+**The comma and repeated spellings are equivalent for free, and that is worth a
+test anyway.** urfave's string-slice flag splits on commas, so `--tag a,b` and
+`--tag a --tag b` produce the same `[]string` without any parsing code. The
+test that runs both spellings and compares raw stdout pins that as contract
+rather than as an accident of the framework, which matters because `--match` is
+then provably the only knob that changes the answer.
+
+## fee-9ajb: tag command: read and edit a feed's tags
+
+**The write-skip needed a spy, not a timestamp.** The acceptance rule "a read
+and a no-op edit do not bump `updated_at`" cannot be asserted through
+`updated_at` in the use-case tests: `newTestApp` runs on a `FixedClock`, so the
+column is byte-identical whether or not the row was rewritten, and the
+assertion passes vacuously against an implementation that always writes. A
+small `store.Store` decorator embedding `*testsupport.InMemoryStore` and
+counting `SetTags` calls observes the skip directly. The same trap applies to
+any future "this path performs no write" claim tested on a fixed clock.
+
+**The delta is a set difference over canonical sets, which makes the write-skip
+free.** `apply` returns the canonical set the feed should carry, so comparing it
+with the canonical current set decides both what changed and whether to write.
+Computing `added`/`removed` from the requested flags instead would have needed
+separate no-op detection and would have reported a requested-but-already-present
+tag as added.
+
+**`--add` composing with `--remove` needs a stated order.** Applying additions
+before removals means a tag named in both ends up removed; the opposite order is
+equally defensible, so the choice is pinned by `TestTagAddBeforeRemove` and
+stated in the `App.Tag` doc comment rather than left to the reader.
+
+**Adding a command touches six places, and only two of them fail loudly.** The
+tree registration and the schema registry are silent when missed (`registryFor`
+falls back to `{"type":"object"}`), while `TestRequestSurfaceCoverage` and the
+golden enumeration fail immediately. `TestRequestSurfaceCoverage` was the one
+not named in the ticket's registration checklist: it parses the library source
+for every `*Request` type, so a new request type fails it until a row is added
+to `requestSurfaceCases`. Expect it on T7 and any later use case.
+
+**The comma rule in `core.ValidateTags` is unreachable from the CLI.** A
+string-slice flag splits on commas before the request is built, so `--add a,b`
+arrives as two valid tags and `--add a,,b` arrives as an empty tag. The comma
+rejection still matters for library callers, which is where its test lives.
+
+## fee-7pg3: tags command: report the lane vocabulary
+
+**A zero-field request still needs its row in `requestSurfaceCases`.** The
+previous ticket predicted `TestRequestSurfaceCoverage` would fire on T7, and it
+did: `TagsRequest{}` is an empty struct, so `flagsFor`/`argsFor` return empty
+slices and nothing about the command's behavior depends on the table, but the
+guard parses the library source for `*Request` types and fails until the row is
+added. The row reads `{"tags", feedwatch.TagsRequest{}, 0, 0}`, which is the
+point of the table: zero flags and zero arguments is a declared surface, not an
+unmapped one.
+
+**A stray positional on a zero-argument command is silently ignored by the
+framework, so the rejection has to be written.** urfave/cli v3 leaves unclaimed
+words in `cmd.Args()` when `Arguments` is empty, so `feedwatch tags extra`
+exited 0 and reported the whole vocabulary until `tagsAction` checked
+`cmd.Args().First()` and returned a usage-category error. The root's own
+`rootAction` already treats a leftover positional as a usage error, so this is
+the subcommand-level version of an established rule rather than a new one.
+
+**Every other zero-argument command still ignores extras.** `list`, `export`,
+`migrate`, and `import` (with a file flag) all accept and discard a stray word;
+only `tags` now rejects it. Making the rule uniform is a tree-wide contract
+change with golden fallout across the whole surface, so it belongs in its own
+ticket rather than riding along here. Until then, `tags` is deliberately the
+strict one, matching what its ticket asked for.
+
+**The `tags` count is over feeds of any status, and that is the only reason the
+result differs from unioning `list --tag`.** A lane whose feeds have all been
+auto-disabled stays visible in the vocabulary, which is what makes `tags` a
+discovery command rather than a summary of what would poll next. The
+active-only count is `list --tag X`, and the doc comment on `App.Tags` says so
+rather than leaving the difference to be discovered from a surprising count.
+
+## fee-5wk4: poll --tag and check --tag
+
+**The lane filter had to be threaded into `skippedCount`, not just the
+selection.** `skippedCount` measured the polled set against every active feed in
+the store, so a lane-scoped poll of a two-feed lane in a three-feed store
+reported `skipped` for a feed that was never a candidate. Both the force branch
+of `selectFeeds` and `skippedCount` now narrow through one `activeIn(filter)`
+helper, which is the structural guarantee that the selection and the count draw
+from the same universe rather than two hand-written `core.ListFilter` literals
+that agree today.
+
+**`--tag` with named feeds is a usage error, and the check has to live in the
+resolution path both `Validate` and the use case share.** `PollRequest.filter`
+and `CheckRequest.filter` mirror `ListRequest.filter`: they own the rule, and
+`Validate` calls them and discards the result. `App.Poll` and `App.Check` call
+`filter` directly rather than calling `Validate` and then re-resolving, so an
+invalid selection cannot reach the store and the rejection cannot drift from the
+validation.
+
+**Rejecting early is what keeps the destructive-adjacent guarantee testable.**
+The CLI tests assert on the fetcher's per-URL request count, not only on exit
+64. A validation that ran after `resolveStore` would still exit 64 while having
+dialed the network, and only the call-count assertion catches that.
+
+**`poll --tag` deliberately does not imply `--force`.** It narrows the _due_
+selection, which is what makes a lane runnable on its own cron cadence; the
+force branch narrows the active selection instead. Both paths are covered
+separately because a single test of `--force --tag` would pass against an
+implementation that quietly forced every lane poll.
+
+## fee-0fcw: items --tag
+
+**`--feed` and `--tag` intersect here, where `poll` and `check` reject the
+combination.** The divergence is deliberate and worth stating, because both
+readings are defensible. `poll --tag X --feed Y` is ambiguous about which set to
+run and is a usage error; `items --tag X --feed Y` narrows a read, so the two
+clauses simply AND, and a feed outside the lane returns an empty list rather
+than an error. The intersection is the store's natural behavior (two independent
+WHERE clauses), so the risk was never a wrong implementation but an untested
+assumption; both the library and CLI tables pin it explicitly, including the
+empty-intersection case.
+
+**Pagination is the test that proves where the filtering lives.** The lane
+fixture titles every item with its age in hours, so `--tag ai --limit 2
+--offset 2` has one hand-computable answer over the filtered set. A Go-side
+filter applied after the store paged would return a different pair while every
+other lane assertion still passed, which is why that subtest is worth its
+arithmetic.
+
+**Request field order is the CLI surface.** `flagsFor` walks the struct in
+declaration order, so placing `Tags`/`Match` next to `Feeds` rather than at the
+end is what keeps `--tag` beside `--feed` in `--help` and in `schema`. Adding
+them also moves `TestRequestSurfaceMapping`'s expected flag count, which is the
+guard's way of asking that a new flag be acknowledged rather than absorbed.
+
+**The output contract did not move.** Only the flag lists in
+`schema/items.stdout`, `help/items.stdout` and `schema/all.stdout` changed;
+`output_schema` and `lifecycle/items.stdout` are byte-identical, which is the
+evidence that no item-level tag field crept in. Items carry no tags of their
+own: a lane is a property of the subscription.
+
+## fee-7emy: prune --tag and rm --tag
+
+**`--tag` narrows a destructive operation; it never authorizes one.** Adding
+tags to `PruneRequest.policy` after the bound check, not before it, is what
+keeps a bare `prune --tag ai` a usage error. The rule is worth a test of its
+own because the natural reading of "I selected a lane" is "I said what to
+prune", and a lane is not a bound: `prune --tag ai` with no `--keep-days` or
+`--max-items` would otherwise silently mean "delete this lane's entire
+history".
+
+**`rm` needed an explicit "no selector" rule that no other command needs.**
+Every other command reads an empty selector as "everything" and is harmless.
+For `rm`, an unguarded empty selector is the difference between removing
+nothing and removing every subscription, so the request rejects it up front
+rather than letting the store resolve it. Both selector usage errors are tested
+against **store state**, not just the exit code: a destructive command that
+validates after it resolves would still exit 64 while having already deleted.
+
+**Validating in the request, not the action, is what makes that guarantee
+cheap.** `RemoveRequest.filter` is called before `resolveStore`, so a rejected
+invocation never opens the store, and the store-state assertion is a
+consequence of where the check lives rather than of extra care in the action.
+
+**`removed` became a list on every path, and the head deliberately did not
+move.** ADR 0005 bumps `schema_version` on a breaking shape change, and this is
+one, but bumping a whole-contract integer over one field on one of sixteen
+commands would break agents pinning `schema_version == 1` for unrelated
+reasons. The pre-1.0 policy makes `CHANGELOG.md` the mechanism instead, so the
+entry has to say explicitly that an unchanged head is not an unchanged shape.
+Revisit at 1.0.
+
+**A golden regenerated with `-update` is only as trustworthy as the tree it
+ran in.** The working tree carried unrelated, uncommitted golden updates from
+earlier tickets in this epic, so `git diff` on `testdata/` showed far more than
+this ticket touched. Read the diff against the working tree's own prior state,
+not against `HEAD`, before concluding a regeneration went wrong;
+`testdata/opml/prune.stdout` staying byte-identical to `HEAD` is the check that
+the untagged `prune` path did not move.
+
+## fee-igmb: OPML tags round-trip
+
+**`,omitempty` on the `category` attribute is what kept the diff to this
+feature.** `encoding/xml` writes every attribute field, so without it each
+untagged outline would have gained `category=""` and
+`testdata/opml/export.stdout` would have moved for a scenario feed that has no
+tags. Placing `Category` after `XMLURL` in `exportOutline` matters for the same
+reason: attribute order follows struct field order, so appending keeps the
+existing attributes in their recorded positions. The check that both went right
+is `testdata/opml/export.stdout` remaining byte-identical after `-update`.
+
+**`export` and `list` were the two commands whose action never called `bind`,
+because their request structs were empty.** Adding fields to `ExportRequest`
+alone would have produced flags that appear in `--help` and `schema`, parse
+without error, and are silently discarded. The CLI-level `--tag` test exists
+specifically to catch that: a library-only test would have passed against the
+broken wiring. When a use case's request goes from empty to non-empty, the bind
+call is part of the change, not a follow-up.
+
+**`TestRequestSurfaceMapping`'s flag-count table is the tripwire for exactly
+that mistake.** It failed the moment `ExportRequest` grew fields, before any
+golden did, which is the ADR 0007 guard doing its job.
+
+**An OPML tag is dropped, not fatal.** OPML arrives from foreign tools that
+know nothing of feedwatch's tag rules, so `importTags` keeps the names that
+pass `core.ValidateTags` and discards the rest, leaving the feed subscribed
+with its usable lanes. The alternative (failing the outline) would make one
+space-bearing category cost the whole subscription. This is the one place tag
+validation is advisory rather than a usage error, and it is a property of the
+foreign source, not of tags.
+
+**Tag inheritance from folder outlines is deliberately not implemented.**
+`walk` threads no parent context, and making a folder imply tags raises a real
+semantic question (does a nested folder append or replace?) that this ticket
+does not answer. `TestParseDoesNotInheritFolderTags` pins the current behavior
+so a future implementation is a conscious decision rather than a silent one.
+
+**Import assigns tags only on create, which falls out of the store's upsert.**
+Re-importing a backup that names an already-subscribed feed leaves its lanes
+alone, consistent with `add`'s omitted-preserves rule and with import already
+reporting such a feed as `skipped`. An `import --tag` applying one lane to
+every entry is a natural follow-up but was left out to keep the round-trip the
+whole diff.
+
+## fee-zs6b: feed tags and lane filtering (epic)
+
+The per-ticket sections above record the local decisions. These are the ones
+that only make sense across the whole epic, and that a reader of any single
+ticket would not reconstruct.
+
+**Two numbers are called a schema version, and only one moved.** The database
+schema version went 1 to 2 (`migrate` reports it as `store_schema_version`);
+the output-contract version in the envelope head (`schema_version`, ADR 0005)
+stayed 1. They are independent by design: the first says what the store's
+columns look like, the second says what an agent's parser can expect. Holding
+the head at 1 across a genuinely breaking `rm` change is a deliberate
+deviation from ADR 0005, justified by the pre-1.0 policy and by the cost of
+signalling a whole-contract generation change to consumers of sixteen commands
+over one field on one. The consequence is that the changelog, not the head, is
+the mechanism recording the break, which is why its entry has to say in so many
+words that an unchanged head is not an unchanged shape. Anyone renaming or
+reusing either number should read this paragraph first.
+
+**This is the codebase's first SQL-side use of JSON.** Tags are stored as a
+JSON array string in a `TEXT` column, matching `items.categories` and
+`items.enclosures`, but unlike those it is also _queried_: matching pushes a
+`json_each(tags)` predicate into SQLite rather than reading every feed and
+filtering in Go. That choice is what keeps `--limit`/`--offset` correct on
+`items --tag` (paging after filtering, not before) and what makes a lane query
+cheap on a large subscription list. Its price is a `store.Store` contract that
+now names tags explicitly, so the predicate lives once per backend rather than
+once per call site. Postgres will need its own spelling of the same predicate
+when that backend lands; the Go-side filtering shortcut is deliberately not
+available as a fallback.
+
+**`AddFeed` omits `tags` from its `DO UPDATE SET` on purpose.** That single
+omission is the whole implementation of "omitted preserves, given replaces":
+the upsert writes tags on insert and never on the conflict path, and `Add`
+calls `SetTags` afterwards only when the request named tags. The alternative,
+having the store distinguish an absent tag set from an empty one, would have
+required a nullable or pointer-typed field threaded through `core.Feed` for a
+distinction only one call site cares about. The behavior it buys is worth
+stating plainly: a routine re-add, which agents do idempotently, never drops a
+feed out of its lanes.
+
+**`list` and `export` were the two commands whose actions never called
+`bind`,** because their request structs had been empty. Adding fields produced
+flags that appeared in `--help` and in `schema`, parsed without error, and were
+silently discarded. A library-level test passes against that wiring; only a
+CLI-level test catches it. The general rule: when a use case's request goes
+from empty to non-empty, wiring `bind` is part of that change, not a follow-up.
+`TestRequestSurfaceMapping`'s flag-count table is the tripwire and fired before
+any golden did.
+
+**`--match` carries the AND/OR semantics, not the spelling of `--tag`.** The
+CLI's `[]string` flags already accept both `--tag a --tag b` and `--tag a,b`,
+and urfave parses them to the same value, so overloading the spelling with
+intersection-versus-union would have made two identical invocations mean
+different things. Putting the semantics in an explicit `--match all|any` also
+made the comma illegal inside a tag name (the flag parser consumes it before
+validation ever sees it), which in turn is what makes the OPML `category`
+encoding unambiguous. `--match` is a per-request field with a default rather
+than a root global, because it is meaningless for `add`, `tag`, `discover`,
+`migrate`, and `schema`, and keeping it on the request types preserves the
+ADR 0007 projection of the CLI surface from the library API.
+
+**The daemon needed no new poll path.** `WithTags` and `WithMatch` populate the
+`PollRequest` the scheduler already issues, so lane scoping cost two options
+and no control flow. Two schedulers over one `App` watch two lanes at two
+cadences against one store, which is the same property the per-lane cron
+pattern relies on: splitting lanes across databases is what would break global
+deduplication, and `--tag` exists so that never has to happen.
+
+## fee-fxl2: docs, changelog, and manual QA for feed tags
+
+**The stale `learnings.md` link had been copied into three places.** `AGENTS.md`
+carried it twice and `docs/build.md` once, all pointing at
+`docs/specs/001-initial-implementation/learnings.md`, which never existed; the
+real file is `docs/specs/learnings.md`, shared across specs. `CLAUDE.md` is a
+symlink to `AGENTS.md`, so fixing the one file fixed both names.
+
+**Every JSON line in `docs/usage.md` was regenerated from a real binary.** The
+examples are hand-written comments, so an edit-by-eye pass would have missed
+that the poll fences were already stale before this feature: they omitted
+`renamed`, which has been in the envelope since the rename-reporting work.
+Running each documented invocation against `make build`'s binary and pasting
+the output is what surfaced that, and it is cheaper than any review.
+
+## fee-zs6b: epic gate for feed tags
+
+**A migration downgrade beat a historical build for the legacy-store test.** The
+epic's acceptance criteria demand that a store created before migration `0002`
+migrate forward cleanly and that a binary predating `0002` refuse a migrated
+store. Deleting the migration file from a scratch copy of the tree yields a
+binary for the second half, but not the first: the rest of the code queries
+`feeds.tags`, so that binary cannot populate a v1 store at all. Producing the
+fixture with SQL instead (`ALTER TABLE feeds DROP COLUMN tags` plus
+`DELETE FROM schema_migrations WHERE version = 2` on a copy of a fully populated
+store) gives a genuine v1 database that still holds feeds and items, which is
+the case that matters: it proves the `DEFAULT '[]'` backfill and that item rows
+survive.
+
+**The comma rule is enforced at two layers with two different reaches.** A
+comma-bearing tag on the command line never reaches `core.ValidateTags`, because
+the urfave slice flag splits on it first: `tag REF --add "a,b"` succeeds and
+stores two tags. That is correct under the settled decision that the flag
+spelling carries no semantics, but it means the comma branch of `ValidateTags`
+is reachable only through the library API. Worth knowing before reading an
+exit 0 there as a gap in validation.
+
+**Leading and trailing whitespace is rejected, not trimmed.** `CanonicalizeTags`
+trims, yet `ValidateTags` runs on the raw input and rejects any tag containing
+whitespace, so `--add "  ZED "` exits 64 while `--add ZED` stores `zed`. The two
+functions serve different callers (validation guards the request, canonicalization
+normalizes what is already valid), and the stricter surface is the documented
+one.

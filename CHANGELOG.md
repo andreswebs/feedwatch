@@ -11,6 +11,36 @@ releases.
 
 ### Changed
 
+- **Breaking: the `rm` result's `removed` field is now an array of strings
+  instead of a single string.** `rm` gained a bulk mode (`rm --tag ai`
+  unsubscribes every feed in a lane), so one command can now remove many feeds
+  and a caller that deletes in bulk needs to know exactly which went. The field
+  is an array on every path: a single-feed `rm REF` reports
+  `{"removed":["https://..."]}`, never a bare string, and an empty lane reports
+  `{"removed":[]}`. Agents reading `.removed` as a string must read
+  `.removed[0]` for a single-feed `rm`, or iterate the array; branching once on
+  the JSON type is enough to support both binaries.
+
+  The envelope head's `schema_version` deliberately stays `1`.
+  [ADR 0005](docs/adr/0005-output-contract.md) bumps the integer on a breaking
+  shape change, and this is one, but bumping the head would signal a
+  whole-contract generation change to consumers of every command over one field
+  on one command, breaking agents that pin `schema_version == 1` for reasons
+  unrelated to `rm`. While the project is pre-1.0 this changelog is the
+  mechanism that records the break; an unchanged head must not be read as an
+  unchanged shape. Revisit at 1.0, when the head becomes a real compatibility
+  promise.
+
+- **Breaking: `store.Store.DueFeeds` now takes a `core.ListFilter`**, so a
+  tagged lane can be polled on its own schedule rather than only under
+  `--force`. Only the filter's `Tags` and `Match` are honored; `Status` is
+  ignored, because a due feed is active by definition. Embedders implementing
+  `store.Store` themselves must update the signature. The same change adds two
+  methods to the interface: `SetTags`, which replaces a feed's tag set, and
+  `TagCounts`, which reports each tag with the number of subscriptions carrying
+  it. `ListFeeds` honors the same tag filter, per
+  [ADR 0007](docs/adr/0007-library-and-frontends.md).
+
 - **Breaking: whole-invocation failures now use the BSD `sysexits.h` exit
   codes instead of exit 1**, adopting the taxonomy in
   [ADR 0001](docs/adr/0001-exit-code-taxonomy.md). Exit 1 and the 2-63 range are
@@ -61,6 +91,47 @@ releases.
 
 ### Added
 
+- **Feeds can be tagged, and every selecting command can be narrowed to a
+  tagged lane.** A lane is a set of feeds sharing a tag, so an agent can poll,
+  query, prune, export, or unsubscribe one interest group without splitting
+  state across databases; keeping one store is what preserves global
+  deduplication, since an item carried by two feeds in two databases would be
+  reported as new twice. Two new commands: `tag REF` reads a subscription's tags
+  and edits them with `--add`, `--remove`, `--set`, or `--clear`, reporting the
+  resulting set plus an `added`/`removed` delta so a caller sees what actually
+  changed; `tags` lists the whole vocabulary as `{tag, feeds}` counts, sorted by
+  tag and counting feeds of any status. Seven existing commands gain a
+  repeatable `--tag` and a `--match` (`all`, the default, or `any`): `list`,
+  `poll`, `check`, `items`, `prune`, `rm`, and `export`. `add` gains `--tag` to
+  tag at subscribe time, following "omitted preserves, given replaces" on the
+  idempotent re-add path, so a routine re-add never silently drops a feed out of
+  its lanes. Tags are canonicalized on every write (trimmed, lowercased,
+  deduplicated, stored sorted), so `--tag AI` and `--tag ai` name the same lane;
+  an empty tag, or one containing a comma or whitespace, is a usage error
+  (exit 64), as is `--match` with any other value, `--tag` combined with
+  positional feed refs, and conflicting `tag` write flags. No new exit codes:
+  tags are a filter, not a new operational mode. Every `FeedView` (`list`,
+  `enable`, `disable`, `rm`) gains an additive `tags` array, always present and
+  `[]` when empty. Tags round-trip through OPML: `export` writes them
+  comma-separated in the `category` attribute, per the OPML 2.0 convention, and
+  `import` reads that attribute back, ignoring an empty or unparseable value
+  rather than failing the outline. `daemon.Scheduler` gains `WithTags` and
+  `WithMatch`, which populate the `PollRequest` it already issues, so one
+  long-running process can watch a single lane with no new poll path. See
+  [docs/usage.md](docs/usage.md) for the command reference and the per-lane cron
+  pattern.
+
+  **The envelope head's `schema_version` stays `1`**, and an unchanged head must
+  not be read as an unchanged shape. Every envelope change in this feature is
+  additive except `rm`'s `removed` (see Changed), and
+  [ADR 0005](docs/adr/0005-output-contract.md) bumps the head integer on a
+  breaking shape change. Holding it at 1 is a deliberate, settled deviation, not
+  an oversight: the pre-1.0 policy stated at the top of this file already covers
+  breaking changes in minor releases, and bumping the head would signal a
+  whole-contract generation change to consumers of all sixteen commands over one
+  field on one command. Revisit at 1.0. Note also that the **database** schema
+  version, reported as `store_schema_version` by `migrate`, does move (1 to 2);
+  the two numbers are independent (see Migration).
 - **feedwatch is now importable as a Go library**, adopting
   [ADR 0007](docs/adr/0007-library-and-frontends.md). The substance moved out of
   the CLI actions into an application service, `App`, with one method per use
@@ -122,3 +193,20 @@ require these updates:
 - Read the store schema version from a `migrate` result's `store_schema_version`,
   not `schema_version` (now the envelope head), and read a `check` result's
   passing-feed count from `passed`, not `ok`.
+- Read `rm`'s `removed` as an array on every path, taking `.removed[0]` where a
+  single feed is expected.
+
+**Database schema 2.** The tags feature adds a `tags` column to `feeds`,
+defaulting to `'[]'`. `feedwatch migrate` applies it automatically and
+idempotently, as does any other command on first store use, so there is no
+manual upgrade step. Existing feeds land on an empty tag set and behave exactly
+as before under every unfiltered invocation; no retagging is required, and
+tagging is purely additive when an agent chooses to start. Item deduplication is
+untouched: tags live on `feeds`, while the dedup key stays `(feed_url,
+dedup_key)`.
+
+There is no schema downgrade path, by design. An older binary run against a
+migrated store finds a stored version higher than its highest embedded
+migration, refuses to operate, and exits 65 (`EX_DATAERR`) rather than risk
+corrupting data written by a future version. Roll the binary forward, not the
+database back.

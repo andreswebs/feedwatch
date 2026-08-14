@@ -67,7 +67,7 @@ dist: build-all | $(DIST_DIR) ## Package cross-platform archives into dist/
 run: ## Run locally with build flags
 	cd $(SRC_DIR) && go run $(BUILDFLAGS) -ldflags="$(LDFLAGS)" $(CMD_DIR)
 
-qa-server: ## Run the manual-QA fixture HTTP server (see docs/manual-qa.md)
+qa-server: ## Run the manual-QA fixture HTTP server (see docs/specs/001-initial-implementation/manual-qa.md)
 	cd $(SRC_DIR) && go run ./cmd/qafixtures $(QA_ARGS)
 
 test: ## Run tests

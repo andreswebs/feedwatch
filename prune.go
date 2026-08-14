@@ -15,9 +15,13 @@ import (
 // value: KeepDays pointing at 0 prunes everything older than now, while a nil
 // KeepDays applies no age policy at all. Pruning is always explicit, so a
 // request naming neither policy is a usage error rather than a silent no-op.
+// Tags narrows a prune to a lane; it never authorizes one, so a request naming
+// only tags is the same usage error as a bare prune.
 type PruneRequest struct {
-	KeepDays *int `flag:"keep-days" usage:"tombstone items older than this many days"`
-	MaxItems *int `flag:"max-items" usage:"keep at most this many items per feed, tombstoning the rest"`
+	KeepDays *int     `flag:"keep-days" usage:"tombstone items older than this many days"`
+	MaxItems *int     `flag:"max-items" usage:"keep at most this many items per feed, tombstoning the rest"`
+	Tags     []string `flag:"tag" usage:"prune only feeds carrying this tag (repeatable); narrows a prune rather than authorizing one, so a bound is still required; all feeds when omitted"`
+	Match    string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
 }
 
 // Validate reports whether the request names at least one non-negative policy.
@@ -47,6 +51,12 @@ func (r PruneRequest) policy(now time.Time) (core.PrunePolicy, error) {
 		}
 		policy.MaxPerFeed = *r.MaxItems
 	}
+
+	filter, err := tagFilter(r.Tags, r.Match)
+	if err != nil {
+		return core.PrunePolicy{}, err
+	}
+	policy.Tags, policy.Match = filter.Tags, filter.Match
 	return policy, nil
 }
 

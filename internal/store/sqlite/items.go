@@ -274,6 +274,15 @@ func nonDateFilters(q core.ItemQuery) (string, []any) {
 			args = append(args, f)
 		}
 	}
+	// The tag clause lives here, alongside the feed set, so countOmittedNoDate
+	// inherits it and the two queries never drift, and so the filter is applied
+	// in SQL ahead of LIMIT/OFFSET; filtering in Go afterwards would return
+	// short pages. It composes with the feed set by AND: --feed X --tag ai is an
+	// intersection.
+	if scope, sargs := feedTagScope(q.Tags, q.Match); scope != "" {
+		clauses = append(clauses, scope)
+		args = append(args, sargs...)
+	}
 	if q.Contains != "" {
 		clauses = append(clauses, "(title LIKE ? OR content_text LIKE ? OR content_html LIKE ?)")
 		like := "%" + q.Contains + "%"

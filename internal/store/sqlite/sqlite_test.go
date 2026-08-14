@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -519,7 +520,7 @@ func TestDueFeeds(t *testing.T) {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
-	due, err := s.DueFeeds(ctx, now)
+	due, err := s.DueFeeds(ctx, now, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("DueFeeds: %v", err)
 	}
@@ -834,5 +835,534 @@ func TestRecordSuccessSameURLIsNoRename(t *testing.T) {
 	}
 	if got.URL != feed {
 		t.Errorf("URL = %q, want %q", got.URL, feed)
+	}
+}
+
+// addTaggedFeed subscribes url carrying tags, so a lane fixture reads as one
+// line per feed.
+func addTaggedFeed(t *testing.T, s *sqlite.Store, url string, tags ...string) {
+	t.Helper()
+	if _, err := s.AddFeed(context.Background(), core.Feed{URL: url, Tags: tags}); err != nil {
+		t.Fatalf("AddFeed %q: %v", url, err)
+	}
+}
+
+// feedURLs collects the URLs of a feed listing in order, for set assertions.
+func feedURLs(feeds []core.Feed) []string {
+	out := make([]string, 0, len(feeds))
+	for _, f := range feeds {
+		out = append(out, f.URL)
+	}
+	return out
+}
+
+// AddFeed stores a feed's tags in canonical form and GetFeed reads them back,
+// proving the column, the write-side canonicalization, and the scan path.
+func TestAddFeedRoundTripsCanonicalTags(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+
+	got, err := s.AddFeed(ctx, core.Feed{URL: feed, Tags: []string{"AI", "agents", "ai"}})
+	if err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	want := []string{"agents", "ai"}
+	if !slices.Equal(got.Tags, want) {
+		t.Errorf("AddFeed Tags = %v, want %v", got.Tags, want)
+	}
+	reread, err := s.GetFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if !slices.Equal(reread.Tags, want) {
+		t.Errorf("GetFeed Tags = %v, want %v", reread.Tags, want)
+	}
+}
+
+// A feed added with no tags reads back with an empty, non-nil tag set, so a
+// caller can range and marshal it without a nil check.
+func TestAddFeedUntaggedReadsBackEmptyNonNil(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTestFeed(t, s, feed)
+
+	got, err := s.GetFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if got.Tags == nil {
+		t.Fatal("Tags = nil, want non-nil empty slice")
+	}
+	if len(got.Tags) != 0 {
+		t.Errorf("Tags = %v, want empty", got.Tags)
+	}
+}
+
+// Re-adding an existing feed without tags preserves the stored set: the upsert
+// deliberately omits tags from its DO UPDATE clause, so a routine re-add never
+// drops a feed out of its lanes.
+func TestAddFeedReAddPreservesTags(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTaggedFeed(t, s, feed, "ai", "agents")
+
+	got, err := s.AddFeed(ctx, core.Feed{URL: feed, Alias: "blog"})
+	if err != nil {
+		t.Fatalf("re-AddFeed: %v", err)
+	}
+	if got.Alias != "blog" {
+		t.Errorf("Alias = %q, want the new alias to be applied", got.Alias)
+	}
+	if want := []string{"agents", "ai"}; !slices.Equal(got.Tags, want) {
+		t.Errorf("Tags = %v, want the stored set %v preserved", got.Tags, want)
+	}
+}
+
+// SetTags replaces a feed's whole tag set, canonicalizing on write, and clears
+// it to an empty set when given no tags.
+func TestSetTagsReplacesAndClears(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const feed = "https://blog.example/feed.xml"
+	addTaggedFeed(t, s, feed, "ai")
+
+	if err := s.SetTags(ctx, feed, []string{"Research", "go", "research"}); err != nil {
+		t.Fatalf("SetTags: %v", err)
+	}
+	got, err := s.GetFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("GetFeed: %v", err)
+	}
+	if want := []string{"go", "research"}; !slices.Equal(got.Tags, want) {
+		t.Errorf("Tags = %v, want %v", got.Tags, want)
+	}
+
+	if err := s.SetTags(ctx, feed, nil); err != nil {
+		t.Fatalf("SetTags clear: %v", err)
+	}
+	got, err = s.GetFeed(ctx, feed)
+	if err != nil {
+		t.Fatalf("GetFeed after clear: %v", err)
+	}
+	if got.Tags == nil || len(got.Tags) != 0 {
+		t.Errorf("Tags = %v, want an empty non-nil set", got.Tags)
+	}
+}
+
+// ListFeeds honors the filter's tags under both match modes and combines them
+// with the status filter. The fixture carries a feed in both lanes, a feed in
+// one, and an untagged feed, so the two modes give different answers.
+func TestListFeedsFiltersByTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const (
+		both = "https://both.example/feed"
+		one  = "https://one.example/feed"
+		none = "https://none.example/feed"
+	)
+	addTaggedFeed(t, s, both, "ai", "agents")
+	addTaggedFeed(t, s, one, "ai")
+	addTestFeed(t, s, none)
+
+	tests := []struct {
+		name   string
+		filter core.ListFilter
+		want   []string
+	}{
+		{"single tag excludes untagged", core.ListFilter{Tags: []string{"ai"}}, []string{both, one}},
+		{"match all requires every tag", core.ListFilter{Tags: []string{"ai", "agents"}, Match: core.MatchAll}, []string{both}},
+		{"match any requires one tag", core.ListFilter{Tags: []string{"ai", "agents"}, Match: core.MatchAny}, []string{both, one}},
+		{"default match is all", core.ListFilter{Tags: []string{"ai", "agents"}}, []string{both}},
+		{"tags are canonicalized", core.ListFilter{Tags: []string{"AI", "ai"}}, []string{both, one}},
+		{"unknown tag matches nothing", core.ListFilter{Tags: []string{"nope"}}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.ListFeeds(ctx, tt.filter)
+			if err != nil {
+				t.Fatalf("ListFeeds: %v", err)
+			}
+			if !slices.Equal(feedURLs(got), tt.want) {
+				t.Errorf("ListFeeds = %v, want %v", feedURLs(got), tt.want)
+			}
+		})
+	}
+}
+
+// A tag filter and a status filter compose: only feeds matching both are
+// listed.
+func TestListFeedsCombinesTagAndStatus(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	const (
+		activeInLane   = "https://a-active.example/feed"
+		disabledInLane = "https://b-disabled.example/feed"
+		disabledOut    = "https://c-disabled.example/feed"
+	)
+	addTaggedFeed(t, s, activeInLane, "ai")
+	addTaggedFeed(t, s, disabledInLane, "ai")
+	addTestFeed(t, s, disabledOut)
+	for _, url := range []string{disabledInLane, disabledOut} {
+		if err := s.SetStatus(ctx, url, core.FeedDisabled); err != nil {
+			t.Fatalf("SetStatus %q: %v", url, err)
+		}
+	}
+
+	got, err := s.ListFeeds(ctx, core.ListFilter{Status: core.FeedDisabled, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("ListFeeds: %v", err)
+	}
+	if want := []string{disabledInLane}; !slices.Equal(feedURLs(got), want) {
+		t.Errorf("ListFeeds = %v, want %v", feedURLs(got), want)
+	}
+}
+
+// DueFeeds narrows by the filter's tags, so a lane can be polled on its own
+// schedule: an out-of-lane due feed and an in-lane not-due feed are both
+// excluded.
+func TestDueFeedsFiltersByTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	const (
+		dueInLane    = "https://a-due.example/feed"
+		notDueInLane = "https://b-notdue.example/feed"
+		dueOutOfLane = "https://c-due.example/feed"
+	)
+	addTaggedFeed(t, s, dueInLane, "ai")
+	addTaggedFeed(t, s, notDueInLane, "ai")
+	addTestFeed(t, s, dueOutOfLane)
+	if _, err := s.RecordSuccess(ctx, notDueInLane, now, now.Add(time.Hour), ""); err != nil {
+		t.Fatalf("RecordSuccess: %v", err)
+	}
+
+	got, err := s.DueFeeds(ctx, now, core.ListFilter{Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("DueFeeds: %v", err)
+	}
+	if want := []string{dueInLane}; !slices.Equal(feedURLs(got), want) {
+		t.Errorf("DueFeeds = %v, want %v", feedURLs(got), want)
+	}
+}
+
+// TagCounts reports the lane vocabulary sorted by tag with the number of
+// subscriptions carrying each, counting feeds of any status, and returns an
+// empty result when nothing is tagged.
+func TestTagCounts(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	got, err := s.TagCounts(ctx)
+	if err != nil {
+		t.Fatalf("TagCounts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("TagCounts on an untagged store = %v, want empty", got)
+	}
+
+	addTaggedFeed(t, s, "https://a.example/feed", "ai", "agents")
+	addTaggedFeed(t, s, "https://b.example/feed", "ai")
+	addTestFeed(t, s, "https://c.example/feed")
+	if err := s.SetStatus(ctx, "https://b.example/feed", core.FeedDisabled); err != nil {
+		t.Fatalf("SetStatus: %v", err)
+	}
+
+	got, err = s.TagCounts(ctx)
+	if err != nil {
+		t.Fatalf("TagCounts: %v", err)
+	}
+	want := []core.TagCount{{Tag: "agents", Feeds: 1}, {Tag: "ai", Feeds: 2}}
+	if !slices.Equal(got, want) {
+		t.Errorf("TagCounts = %v, want %v", got, want)
+	}
+}
+
+// tagBase anchors the interleaved publication times of the tag fixture.
+var tagBase = time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC)
+
+// tagFixture subscribes three feeds — one in both lanes, one in the "ai" lane
+// only, one untagged — each carrying four items whose publication times
+// interleave across feeds. The interleaving is what makes a page of the
+// tag-filtered set differ from the same page of the unfiltered set. Dedup keys
+// encode the hour offset, so they sort in publication order.
+func tagFixture(t *testing.T, s *sqlite.Store) (both, one, none string) {
+	t.Helper()
+	ctx := context.Background()
+	both = "https://both.example/feed"
+	one = "https://one.example/feed"
+	none = "https://none.example/feed"
+	addTaggedFeed(t, s, both, "ai", "agents")
+	addTaggedFeed(t, s, one, "ai")
+	addTestFeed(t, s, none)
+
+	for _, f := range []struct {
+		url   string
+		hours []int
+	}{
+		{both, []int{1, 3, 5, 7}},
+		{one, []int{2, 4, 6, 8}},
+		{none, []int{0, 9, 10, 11}},
+	} {
+		items := make([]core.Item, 0, len(f.hours))
+		for _, h := range f.hours {
+			ts := tagBase.Add(time.Duration(h) * time.Hour)
+			items = append(items, core.Item{
+				FeedURL: f.url, DedupKey: fmt.Sprintf("k%02d", h),
+				Title:       fmt.Sprintf("item %02d", h),
+				ContentText: fmt.Sprintf("body of item %02d", h),
+				PublishedAt: ptrTime(ts), FetchedAt: ts,
+			})
+		}
+		if _, err := s.UpsertItems(ctx, f.url, items); err != nil {
+			t.Fatalf("UpsertItems %q: %v", f.url, err)
+		}
+	}
+	return both, one, none
+}
+
+// itemKeys collects the dedup keys of a result in order, for set assertions.
+func itemKeys(items []core.Item) []string {
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.DedupKey)
+	}
+	return out
+}
+
+// QueryItems narrows to items whose feed carries the requested tags, under both
+// match modes; items themselves are untagged, so the lane is inherited from the
+// subscription.
+func TestQueryItemsFiltersByTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	tagFixture(t, s)
+
+	inLane := []string{"k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08"}
+	bothOnly := []string{"k01", "k03", "k05", "k07"}
+
+	tests := []struct {
+		name  string
+		query core.ItemQuery
+		want  []string
+	}{
+		{"single tag excludes untagged feed", core.ItemQuery{Tags: []string{"ai"}}, inLane},
+		{"match all requires every tag", core.ItemQuery{Tags: []string{"ai", "agents"}, Match: core.MatchAll}, bothOnly},
+		{"match any requires one tag", core.ItemQuery{Tags: []string{"ai", "agents"}, Match: core.MatchAny}, inLane},
+		{"default match is all", core.ItemQuery{Tags: []string{"ai", "agents"}}, bothOnly},
+		{"tags are canonicalized", core.ItemQuery{Tags: []string{"AI", "ai"}}, inLane},
+		{"unknown tag matches nothing", core.ItemQuery{Tags: []string{"nope"}}, []string{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.QueryItems(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("QueryItems: %v", err)
+			}
+			if !slices.Equal(itemKeys(got.Items), tt.want) {
+				t.Errorf("QueryItems = %v, want %v", itemKeys(got.Items), tt.want)
+			}
+		})
+	}
+}
+
+// A tag filter intersects with the other item predicates rather than widening
+// them: --feed plus --tag means "from this feed, which must also be in the
+// lane".
+func TestQueryItemsTagComposesWithOtherFilters(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	both, one, none := tagFixture(t, s)
+
+	tests := []struct {
+		name  string
+		query core.ItemQuery
+		want  []string
+	}{
+		{
+			"feed inside the lane intersects",
+			core.ItemQuery{Feeds: []string{both}, Tags: []string{"ai"}},
+			[]string{"k01", "k03", "k05", "k07"},
+		},
+		{
+			"feed outside the lane yields nothing",
+			core.ItemQuery{Feeds: []string{none}, Tags: []string{"ai"}},
+			[]string{},
+		},
+		{
+			"feed lacking the second tag yields nothing",
+			core.ItemQuery{Feeds: []string{one}, Tags: []string{"ai", "agents"}},
+			[]string{},
+		},
+		{
+			"tag narrows a date window",
+			core.ItemQuery{
+				Tags:  []string{"ai"},
+				Since: ptrTime(tagBase.Add(4 * time.Hour)),
+				Until: ptrTime(tagBase.Add(9 * time.Hour)),
+			},
+			[]string{"k04", "k05", "k06", "k07", "k08"},
+		},
+		{
+			"tag narrows a substring match",
+			core.ItemQuery{Tags: []string{"ai"}, Contains: "item 0"},
+			[]string{"k01", "k02", "k03", "k04", "k05", "k06", "k07", "k08"},
+		},
+		{
+			"tag narrows a substring match to one feed's body",
+			core.ItemQuery{Tags: []string{"ai", "agents"}, Contains: "body of item 05"},
+			[]string{"k05"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.QueryItems(ctx, tt.query)
+			if err != nil {
+				t.Fatalf("QueryItems: %v", err)
+			}
+			if !slices.Equal(itemKeys(got.Items), tt.want) {
+				t.Errorf("QueryItems = %v, want %v", itemKeys(got.Items), tt.want)
+			}
+		})
+	}
+}
+
+// The tag filter is applied in SQL before LIMIT/OFFSET, so a page is the nth
+// page of the filtered set. A Go-side filter applied after pagination would
+// return the unfiltered page's survivors instead, which the interleaved fixture
+// makes a different answer.
+func TestQueryItemsTagFilterPaginatesOverFilteredSet(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	tagFixture(t, s)
+
+	got, err := s.QueryItems(ctx, core.ItemQuery{Tags: []string{"ai"}, Limit: 2, Offset: 2})
+	if err != nil {
+		t.Fatalf("QueryItems: %v", err)
+	}
+	// Filtered ascending order is k01 k02 k03 k04 k05 k06 k07 k08, so the third
+	// and fourth are k03 and k04; unfiltered it would be k02 and k03.
+	if want := []string{"k03", "k04"}; !slices.Equal(itemKeys(got.Items), want) {
+		t.Errorf("page = %v, want %v", itemKeys(got.Items), want)
+	}
+}
+
+// OmittedNoDate counts only dateless items inside the tag filter: an undated
+// item on an out-of-lane feed never inflates the count. This proves
+// countOmittedNoDate picked the tag clause up from the shared non-date filters.
+func TestQueryItemsOmittedNoDateHonorsTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	both, _, none := tagFixture(t, s)
+
+	for _, url := range []string{both, none} {
+		if _, err := s.UpsertItems(ctx, url, []core.Item{
+			{FeedURL: url, DedupKey: "undated", Title: "undated", FetchedAt: tagBase},
+		}); err != nil {
+			t.Fatalf("UpsertItems %q: %v", url, err)
+		}
+	}
+
+	got, err := s.QueryItems(ctx, core.ItemQuery{
+		Tags: []string{"ai"}, Since: ptrTime(tagBase), TimeField: "published",
+	})
+	if err != nil {
+		t.Fatalf("QueryItems: %v", err)
+	}
+	if got.OmittedNoDate != 1 {
+		t.Errorf("OmittedNoDate = %d, want 1 (only the in-lane undated item)", got.OmittedNoDate)
+	}
+}
+
+// A tag-scoped age prune tombstones only in-lane items; an equally old
+// out-of-lane item survives, and the pruned key keeps its fingerprint so a
+// re-poll never re-emits it as new.
+func TestPruneItemsByAgeHonorsTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	both, _, _ := tagFixture(t, s)
+
+	cutoff := tagBase.Add(4 * time.Hour)
+	pruned, err := s.PruneItems(ctx, core.PrunePolicy{KeepBefore: &cutoff, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("PruneItems: %v", err)
+	}
+	// In-lane items before the cutoff: k01, k03 (both) and k02 (one).
+	if pruned != 3 {
+		t.Fatalf("pruned = %d, want 3", pruned)
+	}
+
+	got, err := s.QueryItems(ctx, core.ItemQuery{})
+	if err != nil {
+		t.Fatalf("QueryItems: %v", err)
+	}
+	want := []string{"k00", "k04", "k05", "k06", "k07", "k08", "k09", "k10", "k11"}
+	if !slices.Equal(itemKeys(got.Items), want) {
+		t.Fatalf("surviving items = %v, want %v", itemKeys(got.Items), want)
+	}
+
+	// The out-of-lane feed's oldest item is older than every pruned one and is
+	// still live, so the scope really bound the age pass.
+	if !slices.Contains(itemKeys(got.Items), "k00") {
+		t.Errorf("out-of-lane item k00 was pruned by an in-lane scope")
+	}
+
+	newItems, err := s.UpsertItems(ctx, both, []core.Item{
+		{FeedURL: both, DedupKey: "k01", Title: "item 01 again", FetchedAt: tagBase},
+	})
+	if err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if len(newItems) != 0 {
+		t.Errorf("pruned in-lane key re-emitted as new: %+v", newItems)
+	}
+}
+
+// A tag-scoped max-per-feed prune keeps N per in-lane feed and leaves
+// out-of-lane feeds entirely untouched. The ROW_NUMBER() window must rank each
+// feed's rows within the scope; an unscoped window source would rank in-lane
+// rows against out-of-lane rows and tombstone the wrong items.
+func TestPruneItemsByMaxPerFeedHonorsTag(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	tagFixture(t, s)
+
+	pruned, err := s.PruneItems(ctx, core.PrunePolicy{MaxPerFeed: 2, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("PruneItems: %v", err)
+	}
+	// Two in-lane feeds of four items each keep their two newest.
+	if pruned != 4 {
+		t.Fatalf("pruned = %d, want 4", pruned)
+	}
+
+	got, err := s.QueryItems(ctx, core.ItemQuery{})
+	if err != nil {
+		t.Fatalf("QueryItems: %v", err)
+	}
+	want := []string{"k00", "k05", "k06", "k07", "k08", "k09", "k10", "k11"}
+	if !slices.Equal(itemKeys(got.Items), want) {
+		t.Errorf("surviving items = %v, want %v", itemKeys(got.Items), want)
+	}
+}
+
+// A tag matching no feed prunes nothing rather than falling back to the whole
+// store.
+func TestPruneItemsUnknownTagPrunesNothing(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	tagFixture(t, s)
+
+	cutoff := tagBase.Add(24 * time.Hour)
+	pruned, err := s.PruneItems(ctx, core.PrunePolicy{
+		KeepBefore: &cutoff, MaxPerFeed: 1, Tags: []string{"nope"},
+	})
+	if err != nil {
+		t.Fatalf("PruneItems: %v", err)
+	}
+	if pruned != 0 {
+		t.Errorf("pruned = %d, want 0", pruned)
 	}
 }

@@ -1,11 +1,13 @@
 NAME:
-   feedwatch list - list subscriptions with status, alias, failure count, and last error
+   feedwatch list - list subscriptions with status, alias, tags, failure count, and last error
 
 USAGE:
    feedwatch list [options]
 
 OPTIONS:
-   --help, -h  show help
+   --tag string [ --tag string ]  tag to filter by (repeatable); all feeds when omitted
+   --match string                 multi-tag semantics: 'all' (default) or 'any' (default: "all")
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

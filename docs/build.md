@@ -32,4 +32,4 @@ individually, but always finish with a full `make build`.
 Note that `golangci-lint` here is v2 (formatters live under a separate
 `formatters:` block, not `linters.enable`) and runs `gosec`, `errcheck`,
 `errorlint`, `revive`, and `staticcheck` over test files too. See
-[learnings.md](specs/001-initial-implementation/learnings.md) for the specific traps these have surfaced.
+[learnings.md](specs/learnings.md) for the specific traps these have surfaced.

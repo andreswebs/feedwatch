@@ -66,6 +66,11 @@ type ImportFail struct {
 // it. Everything else is per-entry result data: a bad entry is recorded in
 // Failed and never aborts the import, and one validation failure never cancels
 // its siblings.
+//
+// An outline's category attribute becomes the new subscription's tags. Tags are
+// assigned only when the subscription is created, matching add's
+// omitted-preserves rule: re-importing a backup leaves an already-subscribed
+// feed's lanes as they are, which is why such a feed is reported as skipped.
 func (a *App) Import(ctx context.Context, req ImportRequest) (ImportResult, error) {
 	feeds, invalid, err := opml.Parse(bytes.NewReader(req.OPML))
 	if err != nil {
@@ -118,7 +123,11 @@ func (a *App) Import(ctx context.Context, req ImportRequest) (ImportResult, erro
 			continue
 		}
 		urls[feed.XMLURL] = true // reserve so an OPML-internal duplicate is skipped
-		candidates = append(candidates, importCandidate{url: feed.XMLURL, title: feed.Title})
+		candidates = append(candidates, importCandidate{
+			url:   feed.XMLURL,
+			title: feed.Title,
+			tags:  importTags(feed.Tags),
+		})
 	}
 
 	validationErrs := a.validateCandidates(ctx, candidates, req.Validate, fetcher, parser)
@@ -134,7 +143,7 @@ func (a *App) Import(ctx context.Context, req ImportRequest) (ImportResult, erro
 			alias = c.title
 		}
 
-		if _, err := st.AddFeed(ctx, core.Feed{URL: c.url, Alias: alias}); err != nil {
+		if _, err := st.AddFeed(ctx, core.Feed{URL: c.url, Alias: alias, Tags: c.tags}); err != nil {
 			res.Failed = append(res.Failed, ImportFail{XMLURL: c.url, Reason: err.Error()})
 			continue
 		}
@@ -153,6 +162,21 @@ func (a *App) Import(ctx context.Context, req ImportRequest) (ImportResult, erro
 type importCandidate struct {
 	url   string
 	title string
+	tags  []string
+}
+
+// importTags keeps the tags an outline's category attribute carried that
+// feedwatch can actually store. OPML comes from foreign tools with no notion of
+// feedwatch's tag rules, so an unusable name is dropped and its siblings still
+// place the feed in their lanes, rather than one bad name failing the outline.
+func importTags(tags []string) []string {
+	kept := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if core.ValidateTags([]string{t}) == nil {
+			kept = append(kept, t)
+		}
+	}
+	return core.CanonicalTags(kept)
 }
 
 // validateCandidates fetches and parses each candidate concurrently, returning a

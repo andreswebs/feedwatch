@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,10 +24,11 @@ func runAdd(t *testing.T, st store.Store, f *testsupport.FakeFetcher, p *testsup
 
 // addEnvelope mirrors the stdout AddResult shape for assertions.
 type addEnvelope struct {
-	URL      string `json:"url"`
-	Alias    string `json:"alias"`
-	Interval string `json:"interval"`
-	Created  bool   `json:"created"`
+	URL      string   `json:"url"`
+	Alias    string   `json:"alias"`
+	Interval string   `json:"interval"`
+	Tags     []string `json:"tags"`
+	Created  bool     `json:"created"`
 }
 
 // TestAddValidFeedStoresAndReportsCreated covers behavior 1: adding a valid feed
@@ -166,5 +168,85 @@ func TestAddExistingURLUpdatesIdempotently(t *testing.T) {
 	}
 	if got.Alias != "blog" {
 		t.Errorf("stored alias = %q, want %q", got.Alias, "blog")
+	}
+}
+
+// TestAddAcceptsRepeatableTag covers behavior 1 at the CLI boundary: a
+// repeatable --tag stores the canonical set and reports it in the envelope.
+func TestAddAcceptsRepeatableTag(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+	feedURL := "https://blog.example/feed.xml"
+	fetcher.Register(feedURL, okResult())
+	parser.Register(feedURL, core.ParsedFeed{})
+
+	res := runAdd(t, st, fetcher, parser, clk, feedURL, "--tag", "AI", "--tag", "agents")
+
+	if res.code != 0 {
+		t.Fatalf("add with tags should exit 0, got code %d (stderr %q)", res.code, res.err)
+	}
+
+	var env addEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not an add envelope: %v\ngot: %q", err, res.out)
+	}
+	want := []string{"agents", "ai"}
+	if !slices.Equal(env.Tags, want) {
+		t.Errorf("tags = %v, want %v", env.Tags, want)
+	}
+
+	stored, err := st.GetFeed(context.Background(), feedURL)
+	if err != nil {
+		t.Fatalf("feed was not stored: %v", err)
+	}
+	if !slices.Equal(stored.Tags, want) {
+		t.Errorf("stored tags = %v, want %v", stored.Tags, want)
+	}
+}
+
+// TestAddRejectsUnusableTag covers behavior 6 at the CLI boundary: an unusable
+// tag exits 64 with an empty stdout and leaves no subscription behind. Only the
+// empty tag is exercised here; a comma never survives the flag parser to reach
+// validation, which TestAddTagCommaSpellingIsRepeatedSpelling pins.
+func TestAddRejectsUnusableTag(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+	feedURL := "https://blog.example/feed.xml"
+	fetcher.Register(feedURL, okResult())
+	parser.Register(feedURL, core.ParsedFeed{})
+
+	res := runAdd(t, st, fetcher, parser, clk, feedURL, "--tag", "")
+
+	if res.code != 64 {
+		t.Fatalf("an unusable tag should exit 64 (usage), got code=%d", res.code)
+	}
+	if res.out != "" {
+		t.Errorf("stdout = %q, want empty on a rejected add", res.out)
+	}
+	if _, err := st.GetFeed(context.Background(), feedURL); err == nil {
+		t.Error("a rejected add subscribed the feed, want no subscription")
+	}
+}
+
+// TestAddTagCommaSpellingIsRepeatedSpelling pins the documented equivalence of
+// the two --tag spellings: the slice flag splits on commas, so --tag a,b names
+// two lanes rather than one illegal tag. The comma rule in core.ValidateTags
+// therefore guards library callers, who can pass a string the parser never saw.
+func TestAddTagCommaSpellingIsRepeatedSpelling(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+	feedURL := "https://blog.example/feed.xml"
+	fetcher.Register(feedURL, okResult())
+	parser.Register(feedURL, core.ParsedFeed{})
+
+	res := runAdd(t, st, fetcher, parser, clk, feedURL, "--tag", "ai,agents")
+
+	if res.code != 0 {
+		t.Fatalf("comma-spelled tags should exit 0, got code=%d (stderr %q)", res.code, res.err)
+	}
+
+	stored, err := st.GetFeed(context.Background(), feedURL)
+	if err != nil {
+		t.Fatalf("feed was not stored: %v", err)
+	}
+	if want := []string{"agents", "ai"}; !slices.Equal(stored.Tags, want) {
+		t.Errorf("stored tags = %v, want %v", stored.Tags, want)
 	}
 }

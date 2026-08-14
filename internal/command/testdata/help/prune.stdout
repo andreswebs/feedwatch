@@ -5,9 +5,11 @@ USAGE:
    feedwatch prune [options]
 
 OPTIONS:
-   --keep-days int  tombstone items older than this many days (default: 0)
-   --max-items int  keep at most this many items per feed, tombstoning the rest (default: 0)
-   --help, -h       show help
+   --keep-days int                tombstone items older than this many days (default: 0)
+   --max-items int                keep at most this many items per feed, tombstoning the rest (default: 0)
+   --tag string [ --tag string ]  prune only feeds carrying this tag (repeatable); narrows a prune rather than authorizing one, so a bound is still required; all feeds when omitted
+   --match string                 multi-tag semantics: 'all' (default) or 'any' (default: "all")
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

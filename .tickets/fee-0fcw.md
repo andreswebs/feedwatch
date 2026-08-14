@@ -1,6 +1,6 @@
 ---
 id: fee-0fcw
-status: open
+status: closed
 deps: [fee-2lbg, fee-o5uq, fee-frus]
 links: []
 created: 2026-08-14T02:49:18Z
@@ -125,3 +125,15 @@ a plain `items` invocation and should be unchanged; verify.
 - `schema/items.stdout`, `help/items.stdout`, and `schema/all.stdout` are
   regenerated and reviewed.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T20:12:45Z**
+
+Implemented items --tag/--match. ItemsRequest gained Tags/Match placed next to Feeds (declaration order drives flag order in --help and schema); both resolve through the shared tagFilter helper inside query(now), which Validate calls and discards, so validation cannot drift from resolution. No other App.Items change was needed: core.ItemQuery, the SQLite store and InMemoryStore already carried Tags/Match from fee-frus.
+
+--tag composes as an intersection with --feed, --since/--until, --contains and --fields; a feed outside the lane yields items:[] and exit 0. This deliberately diverges from poll/check, where --tag plus named feeds is a usage error - items narrows a read rather than choosing a run set. Pagination and omitted_no_date are computed over the filtered set, pinned by a hand-computed --tag ai --limit 2 --offset 2 subtest and by an undated item seeded both inside and outside the lane.
+
+No item-level tag field was introduced anywhere: output_schema in schema/items.stdout and lifecycle/items.stdout are byte-identical. Regenerated goldens are limited to the flag lists in schema/items.stdout, help/items.stdout and schema/all.stdout. TestRequestSurfaceMapping's items flag count moved 9 -> 11.
+
+Tests: TestItemsFiltersByTag, TestItemsTagOmittedNoDateCountsOnlyInLane, TestItemsTagProjects, TestItemsRejectsInvalidTagSelection in items_test.go; TestItemsTagFlagsReachTheRequest, TestItemsTagEmptyLaneSerializesAsList, TestItemsTagOmittedNoDateCountsOnlyInLane, TestItemsTagProjects, TestItemsRejectsInvalidTagSelection in internal/command/items_test.go. A shared seedLaneItems fixture in each package reuses the existing seedLaneFeeds three-feed lane and titles items by age in hours so lane order and pages are hand-computable. Docs and CHANGELOG remain deferred to fee-fxl2. make build passes.

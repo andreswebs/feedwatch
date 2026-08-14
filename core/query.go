@@ -8,6 +8,8 @@ import (
 // ListFilter narrows a feed listing. A zero value matches every feed.
 type ListFilter struct {
 	Status FeedStatus // "" matches any status
+	Tags   []string   // empty matches every feed
+	Match  TagMatch   // "" is MatchAll
 }
 
 // ItemOrder controls the sort of an item query.
@@ -27,6 +29,8 @@ type ItemQuery struct {
 	Order     ItemOrder
 	Fields    []string // projection; empty selects all fields
 	TimeField string   // axis for Since/Until: "published" (default, "") or "fetched"
+	Tags      []string // empty matches every feed
+	Match     TagMatch // "" is MatchAll
 }
 
 // ValidItemFields is the set of field names accepted by `items --fields`. It is
@@ -110,4 +114,6 @@ type ItemQueryResult struct {
 type PrunePolicy struct {
 	KeepBefore *time.Time // delete items older than this
 	MaxPerFeed int        // keep at most this many per feed; 0 disables
+	Tags       []string   // empty matches every feed
+	Match      TagMatch   // "" is MatchAll
 }

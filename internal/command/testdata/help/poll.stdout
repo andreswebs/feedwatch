@@ -5,8 +5,10 @@ USAGE:
    feedwatch poll [options] [FEED...]
 
 OPTIONS:
-   --force, --all  poll every active feed, ignoring the schedule
-   --help, -h      show help
+   --force, --all                 poll every active feed, ignoring the schedule
+   --tag string [ --tag string ]  poll only feeds carrying this tag (repeatable); cannot be combined with named feeds
+   --match string                 multi-tag semantics: 'all' (default) or 'any' (default: "all")
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

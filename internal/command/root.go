@@ -103,6 +103,8 @@ func (d Deps) commands() []*cliv3.Command {
 		d.rmCommand(),
 		d.enableCommand(),
 		d.disableCommand(),
+		d.tagCommand(),
+		d.tagsCommand(),
 		d.itemsCommand(),
 		d.pruneCommand(),
 		d.discoverCommand(),

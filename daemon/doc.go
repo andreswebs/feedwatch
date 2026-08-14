@@ -22,10 +22,18 @@
 // WithInterval controls only how often the scheduler asks what is due; it is not
 // a per-feed poll interval. feedwatch already schedules per feed: the store
 // selects the feeds whose next-due time has passed, and per-feed intervals and
-// failure backoff decide that time. The scheduler therefore polls with an empty
-// request and never forces, so per-feed politeness and backoff stay in effect. A
-// scheduler that forced every feed on every tick would hammer publishers and
-// defeat that machinery.
+// failure backoff decide that time. The scheduler therefore never forces, so
+// per-feed politeness and backoff stay in effect. A scheduler that forced every
+// feed on every tick would hammer publishers and defeat that machinery.
+//
+// # One process can watch one lane
+//
+// WithTags narrows the scheduler to feeds carrying the listed tags, with
+// WithMatch choosing the multi-tag semantics, so an embedder can run one
+// scheduler per lane. The lane is a selection passed through to App.Poll, not a
+// second scheduling rule: only due feeds in the lane are polled, and the
+// scheduler holds no selection logic of its own. A tag the store cannot accept
+// surfaces in Event.Err like any other poll failure.
 //
 // # Runs never overlap
 //

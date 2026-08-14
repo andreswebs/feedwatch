@@ -82,7 +82,7 @@ func TestEnableDisabledFeed(t *testing.T) {
 		t.Errorf("stored last_error = %q, want cleared", got.LastError)
 	}
 
-	due, err := st.DueFeeds(context.Background(), pollFixedTime())
+	due, err := st.DueFeeds(context.Background(), pollFixedTime(), core.ListFilter{})
 	if err != nil {
 		t.Fatalf("DueFeeds: %v", err)
 	}

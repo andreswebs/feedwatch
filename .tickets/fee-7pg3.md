@@ -1,6 +1,6 @@
 ---
 id: fee-7pg3
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq]
 links: []
 created: 2026-08-14T02:46:34Z
@@ -146,3 +146,9 @@ the tree actually does and pin it.
 - Golden files for `tags`, plus `schema/all.stdout` and `help/root.stdout`, are
   regenerated and their diffs reviewed.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:59:00Z**
+
+Implemented the tags command end to end: tags.go (TagsRequest/TagsResult/App.Tags, MarshalJSON coalescing tags to [], two-column RenderText) and internal/command/tags.go, registered in Deps.commands(), schemaRegistry, requestSurfaceCases, schema_test's command list and objects map, and envelope_test's envelopeCases. Counts feeds of any status via Store.TagCounts, sorted by tag. Behaviors 1-5 covered in tags_test.go (library) and internal/command/tags_test.go (CLI). Goldens schema/tags.stdout, help/tags.stdout, schema/all.stdout and help/root.stdout regenerated and reviewed. One judgement call worth knowing: urfave leaves stray positionals in cmd.Args() for a zero-argument command, so 'tags extra' exited 0 until tagsAction rejected it explicitly (usage error, exit 64, message points at 'list --tag'). Every other zero-arg command (list, export, migrate) still ignores extras; making that uniform is a tree-wide contract change and deserves its own ticket. No CHANGELOG or docs/usage.md entry was added: fee-fxl2 owns the feature's docs and changelog, matching what the tag command ticket did. make build passes.

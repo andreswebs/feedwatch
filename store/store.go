@@ -21,10 +21,19 @@ type Store interface {
 	GetFeed(ctx context.Context, ref string) (core.Feed, error)
 	// ListFeeds returns the subscriptions matching the filter.
 	ListFeeds(ctx context.Context, f core.ListFilter) ([]core.Feed, error)
-	// DueFeeds returns active feeds whose next-due time is at or before now.
-	DueFeeds(ctx context.Context, now time.Time) ([]core.Feed, error)
+	// DueFeeds returns active feeds whose next-due time is at or before now,
+	// narrowed by the filter's tags. The filter's Status is ignored: a due feed
+	// is active by definition.
+	DueFeeds(ctx context.Context, now time.Time, f core.ListFilter) ([]core.Feed, error)
 	// SetStatus enables or disables a feed.
 	SetStatus(ctx context.Context, url string, s core.FeedStatus) error
+	// SetTags replaces a feed's tag set with the canonical form of tags, writing
+	// an empty set when tags is empty. Add, remove, and clear semantics are the
+	// caller's to compute.
+	SetTags(ctx context.Context, url string, tags []string) error
+	// TagCounts returns each distinct tag with the number of subscriptions
+	// carrying it, sorted by tag, counting feeds of any status.
+	TagCounts(ctx context.Context) ([]core.TagCount, error)
 	// SetValidators writes conditional-GET validators, skipping empty values.
 	SetValidators(ctx context.Context, url, etag, lastModified string) error
 	// RecordSuccess clears failure state and schedules the next poll. When

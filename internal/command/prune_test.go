@@ -156,3 +156,75 @@ func TestPruneExplicitZeroKeepDays(t *testing.T) {
 		t.Errorf("pruned = %d, want 1\ngot: %q", env.Pruned, res.out)
 	}
 }
+
+// TestPruneByTagScopesToLane covers behavior 1 of the lane-scoped prune: an
+// in-lane per-feed prune tombstones only in-lane items, while an out-of-lane
+// feed carrying more items than the cutoff keeps every one of them.
+func TestPruneByTagScopesToLane(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	ai, other := "https://a.example/feed.xml", "https://b.example/feed.xml"
+	if _, err := st.AddFeed(context.Background(), core.Feed{URL: ai, Tags: []string{"ai"}, Status: core.FeedActive}); err != nil {
+		t.Fatalf("AddFeed(%s): %v", ai, err)
+	}
+	if _, err := st.AddFeed(context.Background(), core.Feed{URL: other, Status: core.FeedActive}); err != nil {
+		t.Fatalf("AddFeed(%s): %v", other, err)
+	}
+	for _, url := range []string{ai, other} {
+		seedItem(t, st, url, "a", "first", now.Add(-3*time.Hour), now)
+		seedItem(t, st, url, "b", "second", now.Add(-2*time.Hour), now)
+		seedItem(t, st, url, "c", "third", now.Add(-1*time.Hour), now)
+	}
+
+	res := runPrune(t, st, clk, "--tag", "ai", "--max-items", "1")
+	if res.code != 0 {
+		t.Fatalf("prune --tag should exit 0, got code %d (stderr=%q)", res.code, res.err)
+	}
+	if env := parsePruneEnvelope(t, res.out); env.Pruned != 2 {
+		t.Errorf("pruned = %d, want 2 (only the in-lane feed's surplus)\ngot: %q", env.Pruned, res.out)
+	}
+	if got := countItems(t, st, ai); got != 1 {
+		t.Errorf("in-lane feed holds %d item(s), want 1", got)
+	}
+	if got := countItems(t, st, other); got != 3 {
+		t.Errorf("out-of-lane feed holds %d item(s), want 3 untouched", got)
+	}
+}
+
+// TestPruneTagAloneStillRequiresBound covers that --tag narrows a prune without
+// authorizing one: a bare prune --tag names no bound and stays a usage error.
+func TestPruneTagAloneStillRequiresBound(t *testing.T) {
+	now := pollFixedTime()
+	clk := testsupport.FixedClock(now)
+	st := testsupport.NewInMemoryStore(clk)
+
+	url := "https://a.example/feed.xml"
+	if _, err := st.AddFeed(context.Background(), core.Feed{URL: url, Tags: []string{"ai"}, Status: core.FeedActive}); err != nil {
+		t.Fatalf("AddFeed: %v", err)
+	}
+	seedItem(t, st, url, "a", "first", now.Add(-time.Hour), now)
+
+	res := runPrune(t, st, clk, "--tag", "ai")
+	if res.code != 64 {
+		t.Errorf("prune --tag with no bound should exit 64 (usage), got code=%d", res.code)
+	}
+	if res.out != "" {
+		t.Errorf("stdout should be empty on usage error, got %q", res.out)
+	}
+	if got := countItems(t, st, url); got != 1 {
+		t.Errorf("feed holds %d item(s), want 1 untouched", got)
+	}
+}
+
+// countItems reports how many items the store still holds for url.
+func countItems(t *testing.T, st store.Store, url string) int {
+	t.Helper()
+
+	qr, err := st.QueryItems(context.Background(), core.ItemQuery{Feeds: []string{url}})
+	if err != nil {
+		t.Fatalf("QueryItems(%s): %v", url, err)
+	}
+	return len(qr.Items)
+}

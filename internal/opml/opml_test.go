@@ -221,3 +221,93 @@ func TestWriteEmpty(t *testing.T) {
 		t.Errorf("feeds = %d, want 0", len(feeds))
 	}
 }
+
+// TestWriteEmitsCategoryForTaggedFeed covers behavior 1: a tagged feed emits a
+// comma-joined category attribute, and an untagged one emits no category at all,
+// so an existing export of untagged feeds is byte-identical.
+func TestWriteEmitsCategoryForTaggedFeed(t *testing.T) {
+	feeds := []opml.Feed{
+		{XMLURL: "https://a.example/feed.xml", Title: "Alpha", Tags: []string{"agents", "ai"}},
+		{XMLURL: "https://b.example/feed.xml", Title: "Beta"},
+	}
+
+	var buf strings.Builder
+	if err := opml.Write(&buf, feeds); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, `category="agents,ai"`) {
+		t.Errorf("output missing the joined category attribute:\n%s", out)
+	}
+	if strings.Contains(out, `category=""`) {
+		t.Errorf("untagged feed emitted an empty category attribute (omitempty missing):\n%s", out)
+	}
+}
+
+// TestParseReadsCategory covers behavior 2: category is split on commas, each
+// element trimmed, and empty elements dropped.
+func TestParseReadsCategory(t *testing.T) {
+	doc := `<opml version="2.0"><body>
+    <outline type="rss" text="Alpha" xmlUrl="https://a.example/feed.xml" category="ai, agents,"/>
+    <outline type="rss" text="Beta" xmlUrl="https://b.example/feed.xml"/>
+  </body></opml>`
+
+	feeds, _, err := opml.Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(feeds) != 2 {
+		t.Fatalf("feeds = %d, want 2", len(feeds))
+	}
+	if got, want := strings.Join(feeds[0].Tags, "|"), "ai|agents"; got != want {
+		t.Errorf("tags = %q, want %q", got, want)
+	}
+	if len(feeds[1].Tags) != 0 {
+		t.Errorf("untagged feed tags = %v, want none", feeds[1].Tags)
+	}
+}
+
+// TestParseDoesNotInheritFolderTags pins the deliberate scope boundary: a
+// category on an enclosing folder outline is not inherited by the feeds nested
+// inside it.
+func TestParseDoesNotInheritFolderTags(t *testing.T) {
+	doc := `<opml version="2.0"><body>
+    <outline text="Tech" category="folder">
+      <outline type="rss" text="Go" xmlUrl="https://go.example/feed.xml"/>
+    </outline>
+  </body></opml>`
+
+	feeds, _, err := opml.Parse(strings.NewReader(doc))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(feeds) != 1 {
+		t.Fatalf("feeds = %d, want 1", len(feeds))
+	}
+	if len(feeds[0].Tags) != 0 {
+		t.Errorf("tags = %v, want none: folder tags are not inherited", feeds[0].Tags)
+	}
+}
+
+// TestWriteTagsRoundTrip covers Write and Parse as one contract: a tag set
+// survives the emitted document unchanged.
+func TestWriteTagsRoundTrip(t *testing.T) {
+	var buf strings.Builder
+	if err := opml.Write(&buf, []opml.Feed{
+		{XMLURL: "https://a.example/feed.xml", Title: "Alpha", Tags: []string{"agents", "ai"}},
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	feeds, _, err := opml.Parse(strings.NewReader(buf.String()))
+	if err != nil {
+		t.Fatalf("Parse of emitted OPML: %v", err)
+	}
+	if len(feeds) != 1 {
+		t.Fatalf("feeds = %d, want 1", len(feeds))
+	}
+	if got, want := strings.Join(feeds[0].Tags, "|"), "agents|ai"; got != want {
+		t.Errorf("tags = %q, want %q", got, want)
+	}
+}

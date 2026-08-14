@@ -1,6 +1,6 @@
 ---
 id: fee-igmb
-status: open
+status: closed
 deps: [fee-pfpz, fee-o5uq, fee-frus]
 links: []
 created: 2026-08-14T02:51:32Z
@@ -165,3 +165,21 @@ explicitly; if it changed, the `,omitempty` was omitted.
 - `testdata/opml/export.stdout` is confirmed unchanged;
   `schema/{export,all}.stdout` and `help/export.stdout` are regenerated.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T20:27:05Z**
+
+OPML tags round-trip landed end to end.
+
+Write side: opml.Feed gains Tags; exportOutline gains Category (xml:"category,attr,omitempty") placed after XMLURL so attribute order and untagged output are unchanged. Verified testdata/opml/export.stdout is byte-identical after regeneration, which is the omitempty check.
+
+Parse side: outline gains a category attribute, split on commas in walk with each element trimmed and empties dropped. Folder-outline tag inheritance is NOT implemented, as scoped: walk threads no parent context, and folder-implies-tag has its own unanswered semantics (append or replace on nesting). TestParseDoesNotInheritFolderTags pins the current behavior.
+
+export --tag/--match: ExportRequest gained Tags/Match routed through the shared tagFilter helper, and internal/command/export.go's action now calls bind - it was one of the two actions (with list) that passed a literal empty request. TestRequestSurfaceMapping's flag count for export moved 0 -> 2 and was the first thing to fail, before any golden.
+
+import: importCandidate carries tags; importTags keeps only names passing core.ValidateTags and canonicalizes, so a foreign tool's bad category name is dropped rather than failing the outline. Tags are set via AddFeed on create only, so re-importing a backup does not overwrite an already-subscribed feed's lanes.
+
+Follow-up not filed, noted here: an 'import --tag X' applying one lane to every entry is a natural addition but was deliberately left out of this diff.
+
+Goldens regenerated: help/export.stdout and schema/{export,all}.stdout. make build passes.

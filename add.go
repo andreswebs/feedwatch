@@ -17,18 +17,20 @@ type AddRequest struct {
 	URL      string        `arg:"url"`
 	Alias    string        `flag:"alias" usage:"short, unique name to reference the feed"`
 	Interval time.Duration `flag:"interval" usage:"minimum poll interval; 0 uses the configured default"`
+	Tags     []string      `flag:"tag" usage:"tag to assign (repeatable); omitted preserves existing tags on a re-add, given replaces them; use 'tag --clear' to remove every tag"`
 }
 
 // Validate rejects anything that is not an absolute http(s) URL, so add never
 // guesses over the network. A bare host (no scheme) or a non-http scheme is a
 // usage failure pointing the agent at discover for turning a homepage into a
-// feed URL.
+// feed URL. Tag names are checked here too, before any fetch or store call, so
+// an unusable tag never leaves a subscription behind.
 func (r AddRequest) Validate() error {
 	if !isAbsoluteHTTPURL(r.URL) {
 		return usageErr("add requires an absolute http(s) feed URL; " +
 			"run 'feedwatch discover <url>' to find a feed from a homepage")
 	}
-	return nil
+	return core.ValidateTags(r.Tags)
 }
 
 // AddResult is the add result envelope: the canonical feed URL, its alias and
@@ -36,10 +38,11 @@ func (r AddRequest) Validate() error {
 // subscription (false on an idempotent re-add).
 type AddResult struct {
 	Head
-	URL      string `json:"url"`
-	Alias    string `json:"alias,omitempty"`
-	Interval string `json:"interval,omitempty"`
-	Created  bool   `json:"created"`
+	URL      string   `json:"url"`
+	Alias    string   `json:"alias,omitempty"`
+	Interval string   `json:"interval,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
+	Created  bool     `json:"created"`
 }
 
 // Add subscribes to an explicit feed URL in three steps: the URL is validated
@@ -47,7 +50,9 @@ type AddResult struct {
 // bad URL, an unfetchable one, or a body that is not a feed is a usage-category
 // failure that points at discover, so a subscription always names something add
 // could prove is a feed. Adding an already-subscribed URL is an idempotent
-// upsert of its alias and interval, reported with created false.
+// upsert of its alias and interval, reported with created false. Tags follow
+// omitted-preserves, given-replaces: a re-add without any tag keeps the feed in
+// its lanes, while a given set replaces the stored one outright.
 func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 	if err := req.Validate(); err != nil {
 		return AddResult{}, err
@@ -73,12 +78,25 @@ func (a *App) Add(ctx context.Context, req AddRequest) (AddResult, error) {
 		URL:      req.URL,
 		Alias:    req.Alias,
 		Interval: req.Interval,
+		Tags:     req.Tags,
 	})
 	if err != nil {
 		return AddResult{}, err
 	}
 
-	res := AddResult{Head: OKHead(), URL: feed.URL, Alias: feed.Alias, Created: created}
+	// The upsert sets tags on create and leaves them alone on a re-add, so an
+	// omitted --tag preserves the stored set. A given --tag replaces it on
+	// either path through this one write.
+	if len(req.Tags) > 0 {
+		if err := st.SetTags(ctx, feed.URL, req.Tags); err != nil {
+			return AddResult{}, err
+		}
+		if feed, err = st.GetFeed(ctx, feed.URL); err != nil {
+			return AddResult{}, err
+		}
+	}
+
+	res := AddResult{Head: OKHead(), URL: feed.URL, Alias: feed.Alias, Tags: feed.Tags, Created: created}
 	if feed.Interval > 0 {
 		res.Interval = feed.Interval.String()
 	}

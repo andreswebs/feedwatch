@@ -5,8 +5,10 @@ USAGE:
    feedwatch export [options]
 
 OPTIONS:
-   -o string   write OPML to this file instead of stdout
-   --help, -h  show help
+   --tag string [ --tag string ]  export only feeds carrying this tag (repeatable); all feeds when omitted
+   --match string                 multi-tag semantics: 'all' (default) or 'any' (default: "all")
+   -o string                      write OPML to this file instead of stdout
+   --help, -h                     show help
 
 GLOBAL OPTIONS:
    --db PATH                   store location: a filesystem PATH or a postgres:// DSN [$FEEDWATCH_DB]

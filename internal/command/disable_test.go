@@ -61,7 +61,7 @@ func TestDisableActiveFeed(t *testing.T) {
 		t.Errorf("stored status = %q, want %q", got.Status, core.FeedDisabled)
 	}
 
-	due, err := st.DueFeeds(context.Background(), pollFixedTime())
+	due, err := st.DueFeeds(context.Background(), pollFixedTime(), core.ListFilter{})
 	if err != nil {
 		t.Fatalf("DueFeeds: %v", err)
 	}

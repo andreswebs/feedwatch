@@ -6,6 +6,8 @@ USAGE:
 
 OPTIONS:
    --feed string [ --feed string ]      feed url or alias to query (repeatable); all feeds when omitted
+   --tag string [ --tag string ]        tag to filter by (repeatable); all feeds when omitted
+   --match string                       multi-tag semantics: 'all' (default) or 'any' (default: "all")
    --since string                       lower time bound: RFC3339 or relative such as 24h or 7d
    --until string                       upper time bound: RFC3339 or relative such as 24h or 7d
    --limit int                          maximum items to return; 0 returns all (default: 0)

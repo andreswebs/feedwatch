@@ -479,3 +479,137 @@ func TestPollEnvelopeHasFetchedAndDedupedCounters(t *testing.T) {
 		t.Errorf("second deduped = %d, want 2", env2.Deduped)
 	}
 }
+
+// seedLanePollFeeds seeds the lane fixture the tag-scoped poll and check tests
+// share — a feed in two lanes, a feed in one, and an untagged feed — as active,
+// due, healthy subscriptions.
+func seedLanePollFeeds(t *testing.T, st store.Store, f *testsupport.FakeFetcher, p *testsupport.FakeParser) (both, one, none string) {
+	t.Helper()
+
+	both, one, none = "https://both.example/feed.xml", "https://one.example/feed.xml", "https://none.example/feed.xml"
+	due := pollFixedTime().Add(-time.Hour)
+	for _, feed := range []core.Feed{
+		{URL: both, Tags: []string{"ai", "agents"}, Status: core.FeedActive, NextDueAt: &due},
+		{URL: one, Tags: []string{"ai"}, Status: core.FeedActive, NextDueAt: &due},
+		{URL: none, Status: core.FeedActive, NextDueAt: &due},
+	} {
+		if _, err := st.AddFeed(context.Background(), feed); err != nil {
+			t.Fatalf("AddFeed(%s): %v", feed.URL, err)
+		}
+		f.Register(feed.URL, okResult())
+		p.Register(feed.URL, core.ParsedFeed{})
+	}
+	return both, one, none
+}
+
+// TestPollTagFlagsReachTheRequest covers behaviors 1, 3, and 4 at the CLI
+// boundary: it fails before any selection logic if the flags do not bind into
+// the request.
+func TestPollTagFlagsReachTheRequest(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantPolled  int
+		wantSkipped int
+	}{
+		{"no flag polls every due feed", []string{"poll"}, 3, 0},
+		{"one tag narrows to the lane", []string{"poll", "--tag", "ai"}, 2, 0},
+		{"two tags default to match all", []string{"poll", "--tag", "ai", "--tag", "agents"}, 1, 0},
+		{"match any unions the lanes", []string{"poll", "--tag", "ai", "--match", "any", "--tag", "agents"}, 2, 0},
+		{"force narrows the active selection", []string{"poll", "--force", "--tag", "ai"}, 2, 0},
+		{"an empty lane is not an error", []string{"poll", "--tag", "nosuchlane"}, 0, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, fetcher, parser, clk := newPollDoubles(t)
+			seedLanePollFeeds(t, st, fetcher, parser)
+
+			res := runPoll(t, st, fetcher, parser, clk, tt.args...)
+
+			if res.code != 0 {
+				t.Fatalf("poll should exit 0, got code %d\nstderr: %q", res.code, res.err)
+			}
+			var env pollEnvelope
+			if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+				t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+			}
+			if env.Polled != tt.wantPolled {
+				t.Errorf("polled = %d, want %d", env.Polled, tt.wantPolled)
+			}
+			if env.Skipped != tt.wantSkipped {
+				t.Errorf("skipped = %d, want %d", env.Skipped, tt.wantSkipped)
+			}
+		})
+	}
+}
+
+// TestPollSkippedCountsAgainstTheLane covers behavior 3 at the CLI boundary:
+// with one of the lane's two feeds not yet due, skipped is 1 rather than the
+// 2 an unscoped count over the whole store would report.
+func TestPollSkippedCountsAgainstTheLane(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+	_, one, _ := seedLanePollFeeds(t, st, fetcher, parser)
+	now := pollFixedTime()
+	if _, err := st.RecordSuccess(context.Background(), one, now, now.Add(time.Hour), ""); err != nil {
+		t.Fatalf("RecordSuccess: %v", err)
+	}
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll", "--tag", "ai")
+
+	if res.code != 0 {
+		t.Fatalf("poll should exit 0, got code %d\nstderr: %q", res.code, res.err)
+	}
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.Polled != 1 || env.Skipped != 1 {
+		t.Errorf("polled/skipped = %d/%d, want 1/1 against the two-feed lane", env.Polled, env.Skipped)
+	}
+}
+
+// TestPollRejectsInvalidTagSelection covers behaviors 5 and 10 at the CLI
+// boundary: an ambiguous or malformed selection exits 64 with an empty stdout,
+// and nothing is fetched.
+func TestPollRejectsInvalidTagSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"tag with named feed", []string{"poll", "--tag", "ai", "https://both.example/feed.xml"}, []string{"--tag", "named feeds"}},
+		{"unknown match", []string{"poll", "--tag", "ai", "--match", "bogus"}, []string{"all", "any"}},
+		{"tag with whitespace", []string{"poll", "--tag", "a b"}, []string{"whitespace"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st, fetcher, parser, clk := newPollDoubles(t)
+			both, _, _ := seedLanePollFeeds(t, st, fetcher, parser)
+
+			res := runPoll(t, st, fetcher, parser, clk, tt.args...)
+
+			if res.code != 64 {
+				t.Fatalf("an invalid tag selection should exit 64 (usage), got code=%d\nstdout: %q", res.code, res.out)
+			}
+			if res.out != "" {
+				t.Errorf("stdout = %q, want empty on a rejected poll", res.out)
+			}
+			if n := len(fetcher.Requests(both)); n != 0 {
+				t.Errorf("feed was fetched %d time(s), want 0 on a rejected poll", n)
+			}
+
+			var env errEnvelope
+			if err := json.Unmarshal([]byte(res.err), &env); err != nil {
+				t.Fatalf("stderr is not an error envelope: %v\ngot: %q", err, res.err)
+			}
+			if env.Error.Code != core.ErrUsage.Code() {
+				t.Errorf("code = %q, want %q", env.Error.Code, core.ErrUsage.Code())
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(env.Error.Message, want) {
+					t.Errorf("message = %q, want it to mention %q", env.Error.Message, want)
+				}
+			}
+		})
+	}
+}

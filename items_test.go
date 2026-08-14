@@ -3,12 +3,14 @@ package feedwatch_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/core"
+	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
 // TestItemsRequestValidateMessages pins the wording of every items usage error,
@@ -208,5 +210,188 @@ func seedItem(t *testing.T, st interface {
 	}
 	if _, err := st.UpsertItems(ctx, feedURL, []core.Item{it}); err != nil {
 		t.Fatalf("UpsertItems(%s/%s): %v", feedURL, key, err)
+	}
+}
+
+// seedLaneItems seeds the three-feed lane fixture the tag tests share (one feed
+// in both lanes, one in a single lane, one untagged) and gives each feed four
+// items at distinct publication times. Every item's key encodes its age in
+// hours, so a lane's expected order and page are hand-computable: the ai lane
+// holds k00, k01, k03, k04, k06, k07, k09 and k10 in descending publication
+// order.
+func seedLaneItems(t *testing.T, st *testsupport.InMemoryStore, now time.Time) (both, one, none string) {
+	t.Helper()
+
+	both, one, none = seedLaneFeeds(t, st)
+	for feedIdx, url := range []string{both, one, none} {
+		for j := range 4 {
+			age := time.Duration(3*j+feedIdx) * time.Hour
+			seedItem(t, st, url, fmt.Sprintf("k%02d", int(age.Hours())), now.Add(-age))
+		}
+	}
+	return both, one, none
+}
+
+// itemKeys projects an items result onto its dedup keys, which is what every
+// lane assertion compares.
+func itemKeys(res feedwatch.ItemsResult) []string {
+	keys := make([]string, 0, len(res.Items))
+	for _, it := range res.Items {
+		keys = append(keys, it.DedupKey)
+	}
+	return keys
+}
+
+// TestItemsFiltersByTag covers behaviors 1, 2, 3, 4, 5 and 8 on the library
+// side: a tag narrows item history to a lane, the default match is all, --tag
+// composes as an intersection with --feed, the time window and --contains, the
+// page is taken over the filtered set, and an empty lane is an empty result
+// rather than an error.
+func TestItemsFiltersByTag(t *testing.T) {
+	app, st, now := newTestApp(t)
+	both, _, none := seedLaneItems(t, st, now)
+
+	tests := []struct {
+		name string
+		req  feedwatch.ItemsRequest
+		want []string
+	}{
+		{
+			"one tag narrows to the lane",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}},
+			[]string{"k00", "k01", "k03", "k04", "k06", "k07", "k09", "k10"},
+		},
+		{
+			"two tags default to match all",
+			feedwatch.ItemsRequest{Tags: []string{"ai", "agents"}},
+			[]string{"k00", "k03", "k06", "k09"},
+		},
+		{
+			"match any unions the lanes",
+			feedwatch.ItemsRequest{Tags: []string{"ai", "agents"}, Match: "any"},
+			[]string{"k00", "k01", "k03", "k04", "k06", "k07", "k09", "k10"},
+		},
+		{
+			"tag and feed intersect rather than union",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}, Feeds: []string{both}},
+			[]string{"k00", "k03", "k06", "k09"},
+		},
+		{
+			"a feed outside the lane matches nothing",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}, Feeds: []string{none}},
+			[]string{},
+		},
+		{
+			"tag composes with the time window",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}, Since: "5h"},
+			[]string{"k00", "k01", "k03", "k04"},
+		},
+		{
+			"tag composes with contains",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}, Contains: "k04"},
+			[]string{"k04"},
+		},
+		{
+			"page is taken over the filtered set",
+			feedwatch.ItemsRequest{Tags: []string{"ai"}, Limit: 2, Offset: 2},
+			[]string{"k03", "k04"},
+		},
+		{
+			"an empty lane is not an error",
+			feedwatch.ItemsRequest{Tags: []string{"nosuchlane"}},
+			[]string{},
+		},
+		{
+			"no tags query every feed",
+			feedwatch.ItemsRequest{Limit: 3},
+			[]string{"k00", "k01", "k02"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := app.Items(context.Background(), tt.req)
+			if err != nil {
+				t.Fatalf("Items = %v, want nil", err)
+			}
+			got := itemKeys(res)
+			if len(got) != len(tt.want) {
+				t.Fatalf("keys = %v, want %v", got, tt.want)
+			}
+			for i, k := range tt.want {
+				if got[i] != k {
+					t.Fatalf("keys = %v, want %v", got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestItemsTagOmittedNoDateCountsOnlyInLane covers behavior 6: the
+// honest-exclusion count is computed over the filtered set, so an undated item
+// outside the lane is never counted against a lane query.
+func TestItemsTagOmittedNoDateCountsOnlyInLane(t *testing.T) {
+	app, st, now := newTestApp(t)
+	_, one, none := seedLaneItems(t, st, now)
+	seedItem(t, st, one, "in-lane-dateless", time.Time{})
+	seedItem(t, st, none, "out-of-lane-dateless", time.Time{})
+
+	res, err := app.Items(context.Background(), feedwatch.ItemsRequest{Tags: []string{"ai"}, Since: "24h"})
+	if err != nil {
+		t.Fatalf("Items = %v, want nil", err)
+	}
+	if res.OmittedNoDate != 1 {
+		t.Errorf("OmittedNoDate = %d, want 1: only the in-lane undated item counts", res.OmittedNoDate)
+	}
+}
+
+// TestItemsTagProjects covers behavior 7: --tag narrows the rows a projection
+// renders without changing the projected envelope's shape.
+func TestItemsTagProjects(t *testing.T) {
+	app, st, now := newTestApp(t)
+	seedLaneItems(t, st, now)
+
+	req := feedwatch.ItemsRequest{Tags: []string{"ai", "agents"}, Fields: []string{"title"}}
+	res, err := app.Items(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Items = %v, want nil", err)
+	}
+
+	projected, ok := req.Envelope(res).(feedwatch.ProjectedItemsResult)
+	if !ok {
+		t.Fatalf("Envelope returned %T, want feedwatch.ProjectedItemsResult", req.Envelope(res))
+	}
+	if len(projected.Items) != 4 {
+		t.Fatalf("projected %d row(s), want 4: only the both-lane feed's items", len(projected.Items))
+	}
+	for _, row := range projected.Items {
+		if len(row) != 2 || row["title"] == nil || row["feed_url"] == nil {
+			t.Errorf("row = %v, want exactly feed_url and title", row)
+		}
+	}
+}
+
+// TestItemsRejectsInvalidTagSelection covers behavior 9: an unknown --match
+// value and an unstorable tag name are usage errors, reported by both Validate
+// and the use case so a frontend can reject before dialing the store.
+func TestItemsRejectsInvalidTagSelection(t *testing.T) {
+	tests := []struct {
+		name string
+		req  feedwatch.ItemsRequest
+		msg  string
+	}{
+		{"unknown match", feedwatch.ItemsRequest{Tags: []string{"ai"}, Match: "bogus"}, `match must be 'all' or 'any', got "bogus"`},
+		{"empty tag", feedwatch.ItemsRequest{Tags: []string{""}}, `tag must not be empty, got ""`},
+		{"tag with whitespace", feedwatch.ItemsRequest{Tags: []string{"a b"}}, `tag must not contain whitespace, got "a b"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app, st, now := newTestApp(t)
+			seedLaneItems(t, st, now)
+
+			wantUsageError(t, tt.req.Validate(), tt.msg)
+
+			_, err := app.Items(context.Background(), tt.req)
+			wantUsageError(t, err, tt.msg)
+		})
 	}
 }

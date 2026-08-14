@@ -1,6 +1,6 @@
 ---
 id: fee-o5uq
-status: open
+status: closed
 deps: [fee-pfpz, fee-2lbg]
 links: []
 created: 2026-08-14T02:45:14Z
@@ -144,3 +144,15 @@ the exact failure mode this ticket exists to prevent, and no tool will catch it.
 - The compile-time `var _ store.Store` assertions for `InMemoryStore` and
   `FailingUpsertStore` still hold.
 - `make build` passes.
+
+## Notes
+
+**2026-08-14T19:31:14Z**
+
+Tag parity complete in internal/testsupport.InMemoryStore. Feeds-half parity (SetTags, TagCounts, DueFeeds signature, ListFeeds tag filter) had already landed with fee-pfpz; this ticket added the items and prune halves plus every twin test.
+
+Implementation: matchesTags now takes (feedTags, want []string, m core.TagMatch) with the requested set canonicalized once per call site, so the one helper serves both feed loops and the new laneURLSetLocked. laneURLSetLocked resolves a tag filter to the set of in-lane feed URLs (nil = match all), mirroring the SQLite feedTagScope subquery; an item whose feed is not subscribed is in no lane. QueryItems tests it alongside the existing feed-URL set inside the per-feed loop, which puts the lane scope before the omitted-no-date count and before paginate. PruneItems scopes both the age pass and the max-per-feed pass, skipping out-of-lane feeds before collecting live items so out-of-lane items never enter the ranking. AddFeed gained a doc comment explaining that Tags are deliberately not copied onto an existing feed, mirroring the SQLite upsert's DO UPDATE SET omission.
+
+Tests: all 15 tag tests in internal/store/sqlite/sqlite_test.go now have a hand-written twin in internal/testsupport/store_test.go, each with a doc comment naming the mirrored behavior, using a port of the interleaved tagFixture so the pagination twin is a real discriminator. Two extras beyond the SQLite set: SetTags on an unknown URL is a no-op, and a no-tags ListFilter matches every feed.
+
+Note for the next ticket: DueFeeds call sites in internal/poll still pass core.ListFilter{}; threading the real filter is T10's job. FailingUpsertStore needed no change. make build passes.

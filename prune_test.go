@@ -2,11 +2,13 @@ package feedwatch_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/andreswebs/feedwatch"
 	"github.com/andreswebs/feedwatch/core"
+	"github.com/andreswebs/feedwatch/internal/testsupport"
 )
 
 // TestPruneRequestValidate pins the wording of every prune usage error, which
@@ -33,6 +35,104 @@ func TestPruneRequestValidate(t *testing.T) {
 			t.Errorf("Validate = %v, want nil: an explicit --keep-days 0 is a policy", err)
 		}
 	})
+
+	t.Run("a tag narrows a prune but does not authorize one", func(t *testing.T) {
+		req := feedwatch.PruneRequest{Tags: []string{"ai"}}
+		wantUsageError(t, req.Validate(), "prune requires --keep-days and/or --max-items")
+	})
+
+	t.Run("an unparseable match is a usage error", func(t *testing.T) {
+		req := feedwatch.PruneRequest{KeepDays: &zero, Tags: []string{"ai"}, Match: "bogus"}
+		if err := req.Validate(); err == nil {
+			t.Error("Validate = nil, want a usage error for --match bogus")
+		}
+	})
+}
+
+// pruneLaneFixture subscribes an in-lane and an out-of-lane feed, each with
+// three items an hour apart ending at now. The out-of-lane feed deliberately
+// carries more items than any cutoff below, so a half-scoped prune that misses
+// either statement shows up as extra tombstones.
+func pruneLaneFixture(t *testing.T, st *testsupport.InMemoryStore, now time.Time) (ai, other string) {
+	t.Helper()
+	ctx := context.Background()
+
+	ai, other = "https://a.example/feed.xml", "https://b.example/feed.xml"
+	if _, err := st.AddFeed(ctx, core.Feed{URL: ai, Tags: []string{"ai"}, Status: core.FeedActive}); err != nil {
+		t.Fatalf("AddFeed(%s): %v", ai, err)
+	}
+	if _, err := st.AddFeed(ctx, core.Feed{URL: other, Status: core.FeedActive}); err != nil {
+		t.Fatalf("AddFeed(%s): %v", other, err)
+	}
+	for _, url := range []string{ai, other} {
+		var items []core.Item
+		for i := range 3 {
+			at := now.Add(-time.Duration(i+1) * time.Hour)
+			items = append(items, core.Item{
+				DedupKey: fmt.Sprintf("k%d", i), Title: "t", PublishedAt: &at, FetchedAt: at,
+			})
+		}
+		if _, err := st.UpsertItems(ctx, url, items); err != nil {
+			t.Fatalf("UpsertItems(%s): %v", url, err)
+		}
+	}
+	return ai, other
+}
+
+// storedItems counts the items the store still holds for url.
+func storedItems(t *testing.T, st *testsupport.InMemoryStore, url string) int {
+	t.Helper()
+
+	qr, err := st.QueryItems(context.Background(), core.ItemQuery{Feeds: []string{url}})
+	if err != nil {
+		t.Fatalf("QueryItems(%s): %v", url, err)
+	}
+	return len(qr.Items)
+}
+
+// TestPruneTagScopesMaxItems covers the tracer behavior: a lane-scoped
+// per-feed prune tombstones only in-lane items, leaving the out-of-lane feed
+// with all of its history even though it exceeds the cutoff.
+func TestPruneTagScopesMaxItems(t *testing.T) {
+	app, st, now := newTestApp(t)
+	ai, other := pruneLaneFixture(t, st, now)
+
+	one := 1
+	res, err := app.Prune(context.Background(), feedwatch.PruneRequest{MaxItems: &one, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Prune = %v, want nil", err)
+	}
+	if res.Pruned != 2 {
+		t.Errorf("Pruned = %d, want 2 (only the in-lane feed's surplus)", res.Pruned)
+	}
+	if got := storedItems(t, st, ai); got != 1 {
+		t.Errorf("in-lane feed holds %d item(s), want 1", got)
+	}
+	if got := storedItems(t, st, other); got != 3 {
+		t.Errorf("out-of-lane feed holds %d item(s), want 3 untouched", got)
+	}
+}
+
+// TestPruneTagScopesKeepDays covers that the age axis is lane-scoped too, not
+// just the per-feed count axis.
+func TestPruneTagScopesKeepDays(t *testing.T) {
+	app, st, now := newTestApp(t)
+	ai, other := pruneLaneFixture(t, st, now)
+
+	zero := 0
+	res, err := app.Prune(context.Background(), feedwatch.PruneRequest{KeepDays: &zero, Tags: []string{"ai"}})
+	if err != nil {
+		t.Fatalf("Prune = %v, want nil", err)
+	}
+	if res.Pruned != 3 {
+		t.Errorf("Pruned = %d, want 3 (only the in-lane feed's items)", res.Pruned)
+	}
+	if got := storedItems(t, st, ai); got != 0 {
+		t.Errorf("in-lane feed holds %d item(s), want 0", got)
+	}
+	if got := storedItems(t, st, other); got != 3 {
+		t.Errorf("out-of-lane feed holds %d item(s), want 3 untouched", got)
+	}
 }
 
 // TestPruneKeepDaysZeroCutsAtNow covers the reason the request fields are

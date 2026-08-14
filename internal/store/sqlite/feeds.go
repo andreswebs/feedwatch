@@ -13,7 +13,7 @@ import (
 
 const feedColumns = `url, alias, interval_seconds, status, etag, last_modified,
 	failure_count, last_error, last_error_at, last_fetch_at, next_due_at,
-	created_at, updated_at`
+	tags, created_at, updated_at`
 
 // AddFeed upserts a subscription keyed by URL and returns the stored feed. An
 // alias already bound to a different URL is a usage error.
@@ -39,16 +39,25 @@ func (s *Store) AddFeed(ctx context.Context, f core.Feed) (core.Feed, error) {
 		}
 	}
 
+	tags, err := encodeTags(f.Tags)
+	if err != nil {
+		return core.Feed{}, err
+	}
+
+	// tags is set on insert but deliberately absent from DO UPDATE SET: a re-add
+	// preserves the stored lanes, and an explicit replacement goes through
+	// SetTags. That one omission implements "omitted preserves, given replaces"
+	// without the store distinguishing an empty tag set from an absent one.
 	now := s.now()
 	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO feeds (url, alias, interval_seconds, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO feeds (url, alias, interval_seconds, status, tags, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(url) DO UPDATE SET
 			alias = excluded.alias,
 			interval_seconds = excluded.interval_seconds,
 			updated_at = excluded.updated_at`,
 		f.URL, aliasArg(f.Alias), int64(f.Interval/time.Second), string(f.Status),
-		formatTime(now), formatTime(now)); err != nil {
+		tags, formatTime(now), formatTime(now)); err != nil {
 		return core.Feed{}, fmt.Errorf("add feed %q: %w", f.URL, err)
 	}
 	return s.GetFeed(ctx, f.URL)
@@ -79,23 +88,47 @@ func (s *Store) RemoveFeed(ctx context.Context, ref string) error {
 
 // ListFeeds returns subscriptions matching the filter, ordered by URL.
 func (s *Store) ListFeeds(ctx context.Context, filter core.ListFilter) ([]core.Feed, error) {
-	query := `SELECT ` + feedColumns + ` FROM feeds`
-	var args []any
+	var (
+		clauses []string
+		args    []any
+	)
 	if filter.Status != "" {
-		query += ` WHERE status = ?`
+		clauses = append(clauses, `status = ?`)
 		args = append(args, string(filter.Status))
 	}
-	query += ` ORDER BY url`
-	return s.queryFeeds(ctx, query, args...)
+	if pred, pargs := tagPredicate("feeds.tags", filter.Tags, filter.Match); pred != "" {
+		clauses = append(clauses, pred)
+		args = append(args, pargs...)
+	}
+	return s.queryFeeds(ctx, feedQuery(clauses), args...)
 }
 
-// DueFeeds returns active feeds with no next-due time or one at or before now.
-func (s *Store) DueFeeds(ctx context.Context, now time.Time) ([]core.Feed, error) {
-	return s.queryFeeds(ctx,
-		`SELECT `+feedColumns+` FROM feeds
-		 WHERE status = ? AND (next_due_at IS NULL OR next_due_at <= ?)
-		 ORDER BY url`,
-		string(core.FeedActive), formatTime(now))
+// DueFeeds returns active feeds with no next-due time or one at or before now,
+// narrowed by the filter's tags. The filter's Status is ignored: a due feed is
+// active by definition.
+func (s *Store) DueFeeds(ctx context.Context, now time.Time, filter core.ListFilter) ([]core.Feed, error) {
+	clauses := []string{`status = ?`, `(next_due_at IS NULL OR next_due_at <= ?)`}
+	args := []any{string(core.FeedActive), formatTime(now)}
+	if pred, pargs := tagPredicate("feeds.tags", filter.Tags, filter.Match); pred != "" {
+		clauses = append(clauses, pred)
+		args = append(args, pargs...)
+	}
+	return s.queryFeeds(ctx, feedQuery(clauses), args...)
+}
+
+// feedQuery assembles a feed listing over the shared column list, joining the
+// clauses with AND and emitting WHERE only when there is something to filter on.
+func feedQuery(clauses []string) string {
+	var b strings.Builder
+	b.WriteString(`SELECT `)
+	b.WriteString(feedColumns)
+	b.WriteString(` FROM feeds`)
+	if len(clauses) > 0 {
+		b.WriteString(` WHERE `)
+		b.WriteString(strings.Join(clauses, ` AND `))
+	}
+	b.WriteString(` ORDER BY url`)
+	return b.String()
 }
 
 // SetStatus enables or disables a feed.
@@ -271,13 +304,13 @@ func scanFeed(row rowScanner) (core.Feed, error) {
 		f                                    core.Feed
 		alias, etag, lastModified, lastError sql.NullString
 		lastErrorAt, lastFetchAt, nextDueAt  sql.NullString
-		createdAt, updatedAt                 string
+		tags, createdAt, updatedAt           string
 		intervalSeconds                      int64
 		status                               string
 	)
 	if err := row.Scan(&f.URL, &alias, &intervalSeconds, &status, &etag,
 		&lastModified, &f.FailureCount, &lastError, &lastErrorAt, &lastFetchAt,
-		&nextDueAt, &createdAt, &updatedAt); err != nil {
+		&nextDueAt, &tags, &createdAt, &updatedAt); err != nil {
 		return core.Feed{}, err
 	}
 
@@ -289,6 +322,9 @@ func scanFeed(row rowScanner) (core.Feed, error) {
 	f.LastError = lastError.String
 
 	var err error
+	if f.Tags, err = decodeTags(tags); err != nil {
+		return core.Feed{}, err
+	}
 	if f.LastErrorAt, err = parseTimePtr(lastErrorAt); err != nil {
 		return core.Feed{}, err
 	}

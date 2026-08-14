@@ -18,18 +18,54 @@ feedwatch exposes a flat set of verb subcommands with no nesting:
 | Command            | Purpose                                                                  |
 | ------------------ | ------------------------------------------------------------------------ |
 | `add <url>`        | Subscribe to an explicit feed URL after validating it parses as a feed.  |
-| `rm <url\|alias>`  | Unsubscribe a feed and remove its stored items.                          |
-| `list`             | List subscriptions with status, alias, failure count, and last error.   |
+| `rm [<url\|alias>]` | Unsubscribe a feed, or a whole lane with `--tag`, removing stored items. |
+| `list`             | List subscriptions with status, alias, tags, failure count, last error. |
 | `poll [feed...]`   | Poll due feeds (or the named feeds), report new items, update state.     |
+| `check [feed...]`  | Validate reachability and parseability without storing or updating state. |
 | `items`            | Query stored item history with filters, ordering, and pagination.        |
 | `prune`            | Trim stored item history by age and/or per-feed count, preserving dedup. |
 | `discover <url>`   | Read-only: list candidate feeds autodiscovered or probed from a URL.     |
 | `enable <feed>`    | Re-enable a disabled feed and reset its failure lifecycle.               |
 | `disable <feed>`   | Disable a feed so `poll` skips it until re-enabled.                       |
+| `tag <feed>`       | Read or edit the tags on one subscription.                              |
+| `tags`             | List every tag in use with the number of feeds carrying it.             |
 | `import <file\|->` | Add subscriptions from an OPML outline read from a file or stdin.        |
 | `export`           | Export subscriptions as OPML 2.0 to a file or stdout.                    |
 | `migrate`          | Apply or inspect schema migrations (`--status`).                         |
 | `schema [command]` | Emit the machine-readable interface contract.                            |
+
+### Lanes
+
+A **lane** is a set of feeds sharing a tag. Tags are assigned with `add --tag` or
+the `tag` command, and every selecting command (`list`, `poll`, `check`, `items`,
+`prune`, `rm`, `export`) narrows to a lane with a repeatable `--tag` plus a
+`--match`:
+
+| Flag              | Meaning                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| `--tag <name>`    | Tag to select (repeatable, or comma-separated); all feeds when omitted.     |
+| `--match <mode>`  | `all` (default): the feed carries every named tag. `any`: at least one.     |
+
+`[]string` flags accept both the repeated and the comma-separated spelling, and
+the two parse to identical values, so `--tag ai --tag agents` and
+`--tag ai,agents` are the same selection. **`--match` is the only carrier of
+AND/OR semantics**; the spelling of `--tag` carries none.
+
+Tags are canonicalized on every write: trimmed, lowercased, deduplicated, and
+stored sorted, so `--tag AI` and `--tag ai` name the same lane. A tag that is
+empty, or that contains a comma or whitespace, is a usage error (exit 64):
+commas would collide with the comma-separated flag spelling, and whitespace
+makes a tag unquotable in cron scripts.
+
+A feed carrying no tags is matched by no `--tag` selection and is included in
+every command run without `--tag`. A `--tag` naming a tag no feed carries is an
+empty result and exit 0, not an error.
+
+```sh
+feedwatch list --tag ai --tag agents        # feeds carrying both tags
+feedwatch list --tag ai,agents              # identical to the line above
+feedwatch list --tag ai,agents --match any  # feeds carrying either tag
+```
 
 ## Output contract
 
@@ -127,6 +163,21 @@ and `check`). Commands without a per-feed outcome use 0 for success and a
 `sysexits.h` failure code otherwise. No whole-invocation failure exits 1; exit 1
 and the 2-63 range are reserved for result classes.
 
+Lane selection adds no new codes; its misuses are ordinary usage errors (exit
+64), raised before any work is done:
+
+- A tag that is empty, or that contains a comma or whitespace.
+- A `--match` value other than `all` or `any`.
+- `--tag` combined with positional feed refs on `poll`, `check`, or `rm`.
+  Naming feeds and naming a lane are two different selections, so neither side
+  is silently ignored.
+- Conflicting write flags on `tag`: `--set`, `--clear`, and the
+  `--add`/`--remove` pair are mutually exclusive.
+- `rm` with neither a feed ref nor `--tag`.
+
+Selecting a lane that matches no feed is not an error: the command completes
+with an empty result and exits 0.
+
 A failing `poll` can carry a partial envelope on stdout: when a store write
 fails partway through persisting fetched feeds, the feeds already persisted
 before the failure are still reported (`new_items`/`items` cover exactly that
@@ -188,29 +239,54 @@ Options:
 - `--alias <name>` - a short, unique name to reference the feed.
 - `--interval <duration>` - minimum poll interval; `0` uses the configured
   default.
+- `--tag <name>` - tag to assign (repeatable). On the idempotent re-add path an
+  omitted `--tag` preserves the feed's existing tags and a given `--tag`
+  replaces the whole set, so a routine re-add never silently drops a feed out of
+  its lanes. Use `tag --clear` to remove every tag.
 
 ```sh
-feedwatch add https://blog.go.dev/feed.atom --alias godev --interval 30m
-# {"schema_version":1,"ok":true,"url":"https://blog.go.dev/feed.atom","alias":"godev","interval":"30m0s","created":true}
+feedwatch add http://127.0.0.1:8099/feeds/rss20.xml --alias qarss --interval 30m --tag ai --tag agents
+# {"schema_version":1,"ok":true,"url":"http://127.0.0.1:8099/feeds/rss20.xml","alias":"qarss","interval":"30m0s","tags":["agents","ai"],"created":true}
 ```
 
-### `rm <url|alias>`
+### `rm [<url|alias>]`
 
-Unsubscribe a feed by URL or unique alias, removing its stored items.
+Unsubscribe a feed by URL or unique alias, or every feed in a lane with
+`--tag`, removing their stored items. A ref and `--tag` together, and neither of
+them, are both usage errors (exit 64).
+
+`removed` is an array of canonical URLs on every path, including a single-ref
+`rm`, so a caller never parses two shapes for one command. It is `[]` when a
+lane matched no feed.
+
+Options:
+
+- `--tag <name>` - unsubscribe every feed carrying this tag (repeatable).
+- `--match <all|any>` - multi-tag semantics; `all` by default.
 
 ```sh
-feedwatch rm godev
-# {"schema_version":1,"ok":true,"removed":"https://blog.go.dev/feed.atom"}
+feedwatch rm qarss
+# {"schema_version":1,"ok":true,"removed":["http://127.0.0.1:8099/feeds/rss20.xml"]}
+feedwatch rm --tag security
+# {"schema_version":1,"ok":true,"removed":["http://127.0.0.1:8099/feeds/atom.xml"]}
 ```
 
 ### `list`
 
-List subscriptions with their health.
+List subscriptions with their health. Every feed view carries a `tags` array,
+always present and `[]` when the feed is untagged.
+
+Options:
+
+- `--tag <name>` - tag to filter by (repeatable); all feeds when omitted.
+- `--match <all|any>` - multi-tag semantics; `all` by default.
 
 ```sh
 feedwatch list
-# {"schema_version":1,"ok":true,"feeds":[{"url":"...","alias":"godev","interval":"30m0s","status":"active","failures":0},
-#           {"url":"...","status":"disabled","failures":12,"last_error":"dns: no such host"}]}
+# {"schema_version":1,"ok":true,"feeds":[{"url":"http://127.0.0.1:8099/feeds/atom.xml","alias":"qaatom","tags":["security"],"status":"active","failures":0},
+#           {"url":"http://127.0.0.1:8099/feeds/rss20.xml","alias":"qarss","interval":"30m0s","tags":["agents","ai","research"],"status":"active","failures":0}]}
+feedwatch list --tag ai
+# {"schema_version":1,"ok":true,"feeds":[{"url":"http://127.0.0.1:8099/feeds/rss20.xml","alias":"qarss","interval":"30m0s","tags":["agents","ai","research"],"status":"active","failures":0}]}
 ```
 
 ### `poll [feed...]`
@@ -239,6 +315,11 @@ only present for `http` failures. `timeout` is a distinct `category`; no
 Options:
 
 - `--force`, `--all` - poll every active feed, ignoring the schedule.
+- `--tag <name>` - poll only feeds carrying this tag (repeatable). Alone it
+  narrows the scheduled selection, so a lane runs on its own cadence; with
+  `--force` it narrows the forced selection to that lane's active feeds. It
+  cannot be combined with named feeds (exit 64).
+- `--match <all|any>` - multi-tag semantics; `all` by default.
 
 A hard failure while persisting a fetched feed (a store write error) aborts the
 run and exits with a failure code (70, an internal error, for the unclassified
@@ -250,10 +331,19 @@ as an unreachable store, exit 69, or an unknown named feed, a usage error, exit
 
 ```sh
 feedwatch poll          # only due feeds
-# {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":1,"fetched":4,"new_items":4,"deduped":0,"items":[...],"failures":[]}
+# {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":1,"fetched":4,"new_items":4,"deduped":0,"items":[...],"failures":[],"renamed":[]}
 feedwatch poll          # immediately again
-# {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":3,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[]}
+# {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":3,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[],"renamed":[]}
+feedwatch poll --tag ai                       # due feeds in the lane only
+# {"schema_version":1,"ok":true,"polled":1,"succeeded":1,"failed":0,"skipped":0,"fetched":3,"new_items":3,"deduped":0,"items":[...],"failures":[],"renamed":[]}
+feedwatch poll --tag ai                       # immediately again: nothing due
+# {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":1,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[],"renamed":[]}
+feedwatch poll --force --tag ai,security --match any
+# {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":0,"fetched":2,"new_items":2,"deduped":0,"items":[...],"failures":[],"renamed":[]}
 ```
+
+`skipped` counts feeds that were in the selection but not due, so under `--tag`
+it counts against the lane rather than against the whole subscription list.
 
 ### `check [feed...]`
 
@@ -281,9 +371,18 @@ Exit codes mirror `poll`:
 - 64/65/69/70/78: whole-invocation failures (usage, too-new data, store
   unavailable, internal, config) per the exit-code taxonomy above
 
+Options:
+
+- `--tag <name>` - check only feeds carrying this tag (repeatable). The same
+  selection rules as `poll --tag`, including that it cannot be combined with
+  named feeds (exit 64).
+- `--match <all|any>` - multi-tag semantics; `all` by default.
+
 ```sh
 feedwatch check
 # {"schema_version":1,"ok":true,"checked":3,"passed":3,"failed":0,"failures":[]}
+feedwatch check --tag ai
+# {"schema_version":1,"ok":true,"checked":1,"passed":1,"failed":0,"failures":[]}
 feedwatch check https://dead.example/feed.xml
 # {"schema_version":1,"ok":true,"checked":1,"passed":0,"failed":1,"failures":[{"feed_url":"...","category":"network","message":"..."}]}
 ```
@@ -302,6 +401,9 @@ Re-query stored item history. By default the full normalized item is returned;
 Options:
 
 - `--feed <url|alias>` - feed to query (repeatable); all feeds when omitted.
+- `--tag <name>` - restrict to items from feeds carrying this tag (repeatable);
+  all feeds when omitted. The output shape is unchanged, just filtered.
+- `--match <all|any>` - multi-tag semantics; `all` by default.
 - `--since <when>`, `--until <when>` - time bounds, RFC3339 or relative such as
   `24h` or `7d`.
 - `--time-field <published|fetched>` - which time the `--since`/`--until` window
@@ -329,10 +431,14 @@ Options:
   (`null` when unparseable); `fetched_at` is always present.
 
 ```sh
-feedwatch items --feed godev --since 7d --limit 50
+feedwatch items --feed qarss --since 7d --limit 50
 feedwatch items --contains release --order published desc
 feedwatch items --since 7d --time-field fetched --order fetched desc
-feedwatch items --feed godev --fields title,link,published_at,fetched_at
+feedwatch items --feed qarss --fields title,link,published_at,fetched_at
+feedwatch items --tag ai --fields title
+# {"schema_version":1,"ok":true,"items":[{"feed_url":"http://127.0.0.1:8099/feeds/rss20.xml","title":"Third post"},
+#   {"feed_url":"http://127.0.0.1:8099/feeds/rss20.xml","title":"Second post"},
+#   {"feed_url":"http://127.0.0.1:8099/feeds/rss20.xml","title":"First post"}]}
 ```
 
 Each normalized item has this shape (optional fields are omitted when empty):
@@ -379,10 +485,17 @@ Options:
 - `--keep-days <int>` - tombstone items older than this many days.
 - `--max-items <int>` - keep at most this many items per feed, tombstoning the
   rest.
+- `--tag <name>` - prune only the history of feeds carrying this tag
+  (repeatable); all feeds when omitted. `--tag` narrows a prune rather than
+  authorizing one, so a bare `prune --tag ai` with neither `--keep-days` nor
+  `--max-items` is still a usage error (exit 64).
+- `--match <all|any>` - multi-tag semantics; `all` by default.
 
 ```sh
 feedwatch prune --keep-days 90
 feedwatch prune --max-items 500
+feedwatch prune --tag ai --keep-days 30
+# {"schema_version":1,"ok":true,"pruned":3}
 ```
 
 ### `discover <url>`
@@ -420,6 +533,51 @@ feedwatch disable https://flaky.example/feed.xml
 feedwatch enable https://flaky.example/feed.xml
 ```
 
+### `tag <url|alias>`
+
+Read or edit the tags on one subscription, identified by URL or unique alias.
+With no write flag the command is a read. Tags are canonicalized on write
+(trimmed, lowercased, deduplicated, stored sorted), so the reported set is the
+stored set rather than what was asked for.
+
+Options:
+
+- `--add <name>` - tag to add (repeatable); adding a tag the feed already
+  carries is a no-op, not a duplicate.
+- `--remove <name>` - tag to remove (repeatable); removing an absent tag is a
+  no-op, not an error.
+- `--set <name>` - replace the feed's tags with exactly these (repeatable).
+- `--clear` - remove every tag from the feed.
+
+`--set`, `--clear`, and the `--add`/`--remove` pair are mutually exclusive;
+combining them is a usage error (exit 64).
+
+The result carries the resulting `tags` plus the `added` and `removed` delta, so
+a caller sees what actually changed rather than what it requested. All three are
+always present, and `added`/`removed` are `[]` on a read or an idempotent write.
+
+```sh
+feedwatch tag qarss
+# {"schema_version":1,"ok":true,"url":"http://127.0.0.1:8099/feeds/rss20.xml","tags":["agents","ai"],"added":[],"removed":[]}
+feedwatch tag qarss --add research
+# {"schema_version":1,"ok":true,"url":"http://127.0.0.1:8099/feeds/rss20.xml","tags":["agents","ai","research"],"added":["research"],"removed":[]}
+feedwatch tag qarss --remove agents
+# {"schema_version":1,"ok":true,"url":"http://127.0.0.1:8099/feeds/rss20.xml","tags":["ai","research"],"added":[],"removed":["agents"]}
+feedwatch tag qarss --set ai,agents,research
+# {"schema_version":1,"ok":true,"url":"http://127.0.0.1:8099/feeds/rss20.xml","tags":["agents","ai","research"],"added":["agents"],"removed":[]}
+```
+
+### `tags`
+
+List every tag in use with the number of subscriptions carrying it, sorted by
+tag name and counting feeds of any status, so a disabled feed still contributes
+to its lane's count. It takes no flags.
+
+```sh
+feedwatch tags
+# {"schema_version":1,"ok":true,"tags":[{"tag":"agents","feeds":1},{"tag":"ai","feeds":1},{"tag":"research","feeds":1},{"tag":"security","feeds":1}]}
+```
+
 ### `import <file|->` and `export`
 
 `import` reads an OPML outline from a file or stdin (`-`), walks it recursively,
@@ -432,11 +590,21 @@ transient-retry policy as other fetches, and a feed that fails to fetch or parse
 is recorded in `failed` rather than subscribed. `export` writes the current
 subscriptions and aliases as valid OPML 2.0.
 
+Tags round-trip through the OPML `category` attribute, per the OPML 2.0
+convention: `export` writes each feed's tags comma-separated (and omits the
+attribute entirely for an untagged feed), and `import` reads `category` back
+into the feed's tags, canonicalizing each entry by the same rules as `--tag`. An
+empty or unparseable `category` is ignored rather than failing the outline.
+Commas are illegal inside a tag name, so the encoding is unambiguous.
+
 Options:
 
 - `--no-validate` - subscribe every syntactically valid feed without fetching
   it (fast bulk-add). A successful import then does not imply the feeds are
   reachable.
+- `export --tag <name>` - export only feeds carrying this tag (repeatable), so
+  one lane becomes one OPML document.
+- `export --match <all|any>` - multi-tag semantics; `all` by default.
 - `export -o <file>` - write OPML to this file instead of stdout.
 
 ```sh
@@ -445,6 +613,19 @@ feedwatch import subs.opml
 feedwatch import --no-validate subs.opml   # fast bulk-add, no reachability check
 feedwatch export -o backup.opml
 feedwatch export | curl ...
+feedwatch export --tag security
+```
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head>
+    <title>feedwatch subscriptions</title>
+  </head>
+  <body>
+    <outline type="rss" text="qaatom" title="qaatom" xmlUrl="http://127.0.0.1:8099/feeds/atom.xml" category="security"></outline>
+  </body>
+</opml>
 ```
 
 ### `migrate`
@@ -460,10 +641,15 @@ Options:
 
 ```sh
 feedwatch migrate
-# {"schema_version":1,"ok":true,"applied":1,"store_schema_version":1}
+# {"schema_version":1,"ok":true,"applied":2,"store_schema_version":2}
 feedwatch migrate --status
-# {"schema_version":1,"ok":true,"store_schema_version":1,"pending":0,"backend":"sqlite"}
+# {"schema_version":1,"ok":true,"store_schema_version":2,"pending":0,"backend":"sqlite"}
 ```
+
+`store_schema_version` is the database schema version and is independent of the
+envelope head's `schema_version`, which versions the JSON output contract. A
+store migrated by a newer binary is refused by an older one, which exits 65
+rather than risk corrupting data written by a future version.
 
 ### `schema [command]`
 
@@ -504,6 +690,37 @@ appends cleanly to a JSONL log while errors collect separately.
 # crontab: poll every 30 minutes, append new items, log errors.
 */30 * * * * feedwatch poll >> "${HOME}/feed-items.jsonl" 2>> "${HOME}/feedwatch.log"
 ```
+
+### One cron entry per lane
+
+A per-lane digest is one script per lane against **one** database. Splitting
+lanes across separate databases would break global deduplication: an item
+carried by two feeds in two databases is stored, and reported as new, twice.
+`--tag` is the mechanism precisely so a lane can be scheduled independently
+without splitting state.
+
+```sh
+#!/usr/bin/env bash
+# ~/bin/feedwatch-lane-ai
+set -o errexit -o nounset -o pipefail
+export FEEDWATCH_DB="${FEEDWATCH_DB:-${HOME}/.local/state/feedwatch/feedwatch.db}"
+
+feedwatch poll --force --tag ai --timeout 20s --concurrency 12
+
+feedwatch items --tag ai --since 24h \
+  --fields title --fields feed_url --fields link --fields summary \
+  --limit 0
+```
+
+```sh
+# crontab: each lane on its own cadence, all against the same store.
+0  */2 * * * "${HOME}/bin/feedwatch-lane-ai"    >> "${HOME}/lane-ai.jsonl"    2>> "${HOME}/feedwatch.log"
+15 */6 * * * "${HOME}/bin/feedwatch-lane-infra" >> "${HOME}/lane-infra.jsonl" 2>> "${HOME}/feedwatch.log"
+```
+
+Dropping `--force` makes each run honor the per-feed schedule and backoff within
+the lane, which is the politer default when the cron cadence is tighter than the
+feeds' intervals.
 
 ### systemd timer
 

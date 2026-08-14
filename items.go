@@ -21,11 +21,18 @@ import (
 // results are sorted by, so a caller can window on fetch time but sort by
 // publication time.
 //
+// Every filter composes as an intersection: Tags narrows to the feeds carrying
+// a lane, and naming both Feeds and Tags selects the named feeds that are also
+// in the lane rather than the union of the two. Items carry no tags of their
+// own; a lane is a property of the subscription.
+//
 // Fields enumerates the projectable item field names in its usage text, which a
 // struct tag cannot do because it is a compile-time constant; a frontend appends
 // the enumeration from core.ItemFieldNames itself.
 type ItemsRequest struct {
 	Feeds     []string `flag:"feed" usage:"feed url or alias to query (repeatable); all feeds when omitted"`
+	Tags      []string `flag:"tag" usage:"tag to filter by (repeatable); all feeds when omitted"`
+	Match     string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
 	Since     string   `flag:"since" usage:"lower time bound: RFC3339 or relative such as 24h or 7d"`
 	Until     string   `flag:"until" usage:"upper time bound: RFC3339 or relative such as 24h or 7d"`
 	Limit     int      `flag:"limit" usage:"maximum items to return; 0 returns all"`
@@ -58,8 +65,15 @@ func (r ItemsRequest) query(now time.Time) (core.ItemQuery, error) {
 		}
 	}
 
+	filter, err := tagFilter(r.Tags, r.Match)
+	if err != nil {
+		return core.ItemQuery{}, err
+	}
+
 	q := core.ItemQuery{
 		Feeds:    r.Feeds,
+		Tags:     filter.Tags,
+		Match:    filter.Match,
 		Contains: r.Contains,
 		Limit:    r.Limit,
 		Offset:   r.Offset,

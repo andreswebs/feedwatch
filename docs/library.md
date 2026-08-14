@@ -87,6 +87,8 @@ result and an error.
 | List candidate feeds for a URL | `Discover`          | `DiscoverRequest`  | `DiscoverResult`                        |
 | Re-enable a disabled feed      | `Enable`            | `EnableRequest`    | `EnableResult`                          |
 | Disable a feed manually        | `Disable`           | `DisableRequest`   | `DisableResult`                         |
+| Read or edit one feed's tags   | `Tag`               | `TagRequest`       | `TagResult`                             |
+| List tags with feed counts     | `Tags`              | `TagsRequest`      | `TagsResult`                            |
 | Subscribe from an OPML outline | `Import`            | `ImportRequest`    | `ImportResult`                          |
 | Render subscriptions as OPML   | `Export`            | `ExportRequest`    | `ExportResult`                          |
 | Apply pending migrations       | `Migrate`           | none               | `MigrateApplied`                        |
@@ -166,6 +168,30 @@ The filter axis and the sort axis are independent: `TimeField` chooses which tim
 the `Since`/`Until` window matches, `Order` chooses which time the results are
 sorted by. On the publication axis, items with a null `published_at` are excluded
 from a date window and counted in `OmittedNoDate` rather than silently dropped.
+
+### Selecting a lane
+
+A lane is a set of feeds sharing a tag. `ListRequest`, `PollRequest`,
+`CheckRequest`, `ItemsRequest`, `PruneRequest`, `RemoveRequest`, and
+`ExportRequest` each carry `Tags []string` and `Match string`; `AddRequest` and
+`TagRequest` carry the tags to write. `Match` is a per-request field rather than
+a global setting because it is meaningless for `Add`, `Tag`, `Discover`, and
+`Migrate`, and keeping it on the request types is what lets the CLI surface stay
+a projection of the library API.
+
+```go
+res, err := app.List(ctx, feedwatch.ListRequest{
+	Tags:  []string{"ai", "agents"},
+	Match: string(core.MatchAny),
+})
+```
+
+`core.CanonicalTags` is the canonicalization every write goes through (trim,
+lowercase, deduplicate, sort), `core.ValidateTags` rejects an empty tag or one
+containing a comma or whitespace as a usage-category error, and
+`core.ParseTagMatch` resolves a `Match` string, treating `""` as
+`core.MatchAll`. A request's `Validate` calls them, so an embedder gets the same
+exit-64 rejections the CLI does without restating the rules.
 
 ## Error model
 
@@ -260,6 +286,48 @@ package. Read it before starting: several of those points are load-bearing, and
 a backend that gets the `GetFeed` miss category wrong turns a fresh subscription
 into a command failure.
 
+### Tag support in the store contract
+
+Lane filtering is pushed into the backend rather than applied in Go over a full
+read, so that `Limit`/`Offset` on an item query stay correct and a lane query
+never loads every feed. That makes tags part of the `store.Store` contract:
+
+```go
+DueFeeds(ctx context.Context, now time.Time, f core.ListFilter) ([]core.Feed, error)
+SetTags(ctx context.Context, url string, tags []string) error
+TagCounts(ctx context.Context) ([]core.TagCount, error)
+```
+
+`DueFeeds` gained the `core.ListFilter` parameter (a breaking change for an
+existing implementation), and `SetTags` and `TagCounts` are new. The behavior
+each owes:
+
+- **Canonical storage.** `SetTags` replaces a feed's whole tag set, writing an
+  empty set when `tags` is empty. Add, remove, and clear semantics are the
+  caller's to compute; the store only ever sees the final set. Store the
+  canonical form (`core.CanonicalTags`) so the persisted bytes are stable and a
+  tag comparison is a plain string comparison.
+- **Filter semantics.** `core.ListFilter`, `core.ItemQuery`, and
+  `core.PrunePolicy` each carry `Tags []string` and `Match core.TagMatch`. An
+  empty `Tags` matches every feed. A non-empty `Tags` under `core.MatchAll` (the
+  zero value) matches a feed carrying **every** named tag; under `core.MatchAny`
+  it matches a feed carrying **at least one**. A feed with no tags is matched by
+  no non-empty `Tags` filter. `ListFeeds`, `QueryItems`, and `PruneItems` all
+  honor the filter, and `QueryItems` applies it before `Limit` and `Offset`.
+- **`DueFeeds` ignores the filter's `Status`.** Only `Tags` and `Match` are
+  honored, because a due feed is active by definition. This is what lets a lane
+  be polled on its own schedule rather than only under `--force`.
+- **`TagCounts` counts feeds of any status**, returning each distinct tag with
+  the number of subscriptions carrying it, sorted by tag, so a disabled feed
+  still contributes to its lane's vocabulary. A store with no tagged feeds
+  returns an empty slice, not an error.
+- **`AddFeed` writes tags on insert but never on the conflict-update path.** A
+  re-add must preserve the stored set, so a routine re-add does not drop a feed
+  out of its lanes; replacing the set is `SetTags`'s job, which `Add` calls only
+  when the request named tags explicitly. That one omission is what implements
+  "omitted preserves, given replaces" without the store having to distinguish an
+  empty tag set from an absent one.
+
 The test doubles feedwatch uses internally are **not published**. Publishing them
 as a `feedwatchtest` conformance package is a deferred nice-to-have, contingent on
 a real alternative backend existing; until then, an implementor writes their own
@@ -304,6 +372,20 @@ Four properties are worth knowing before wiring it in:
 - **A poll failure does not stop the loop.** It is published in `Event.Err` and
   the next tick proceeds; whether to stop is the embedder's decision.
 
+`WithTags` and `WithMatch` scope a scheduler to one lane, populating the
+`PollRequest` it already issues rather than adding a poll path:
+
+```go
+s := daemon.New(app,
+	daemon.WithInterval(5*time.Minute),
+	daemon.WithTags("ai", "agents"),
+	daemon.WithMatch(core.MatchAny),
+)
+```
+
+Two schedulers over the same `App` can therefore watch two lanes at two
+cadences against one store, which keeps deduplication global.
+
 `Run` returns `ctx.Err()` once the context is done and closes the event channel
 before returning, so a consumer ranging over `Events()` terminates. A `Scheduler`
 is single-use: a second `Run` returns `daemon.ErrAlreadyRunning`.
@@ -324,8 +406,9 @@ same values, and are the only lines here without an example behind them:
 | `ExampleWithStore`         | injecting a custom `store.Store`               |
 | `ExampleApp_Poll_errors`   | classifying failures by `core.Category`        |
 | `ExampleScheduler`         | embedding the daemon and draining `Events()`   |
+| `ExampleScheduler_lane`    | scoping a scheduler to one tagged lane         |
 
 The first six are in `example_test.go` at the repository root; `ExampleScheduler`
-is in `daemon/example_test.go`. Examples whose behavior depends on the network or
+and `ExampleScheduler_lane` are in `daemon/example_test.go`. Examples whose behavior depends on the network or
 the wall clock carry no `// Output:` comment, so the toolchain compiles them
 without running them.

@@ -78,7 +78,7 @@ func TestRunDueFeedsReturnNewItemsInSelectionOrder(t *testing.T) {
 	p.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
 	p.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}}})
 
-	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunSkipsFeedsNotYetDue(t *testing.T) {
 	p := testsupport.NewFakeParser()
 	p.Register(due, core.ParsedFeed{Items: []core.Item{{GUID: "d1", Title: "d1"}}})
 
-	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestRunForceIgnoresScheduleAndSkipsNothing(t *testing.T) {
 	p := testsupport.NewFakeParser()
 	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "x1", Title: "x1"}}})
 
-	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, true)
+	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, true, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -161,7 +161,7 @@ func TestRunNamedFeedPolledRegardlessOfScheduleAndSkipsNothing(t *testing.T) {
 	p := testsupport.NewFakeParser()
 	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "n1", Title: "n1"}}})
 
-	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{url}, false)
+	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{url}, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestRunUnknownNamedFeedIsHardError(t *testing.T) {
 	s := testsupport.NewInMemoryStore(clk)
 	d := runDeps(s, testsupport.NewFakeFetcher(), testsupport.NewFakeParser(), clk)
 
-	result, feedErrs, err := Run(context.Background(), d, []string{"https://nope.example/feed.xml"}, false)
+	result, feedErrs, err := Run(context.Background(), d, []string{"https://nope.example/feed.xml"}, false, core.ListFilter{})
 	if err == nil {
 		t.Fatal("Run: want hard error for unknown ref, got nil")
 	}
@@ -206,7 +206,7 @@ func TestRunPartialFailureExitsThree(t *testing.T) {
 	p := testsupport.NewFakeParser()
 	p.Register(good, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}}})
 
-	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+	result, feedErrs, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -232,7 +232,7 @@ func TestRunAllFailedExitsTwo(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.RegisterError(url, core.HTTPErr(url, 500, nil))
 
-	result, feedErrs, err := Run(context.Background(), runDeps(s, f, testsupport.NewFakeParser(), clk), nil, false)
+	result, feedErrs, err := Run(context.Background(), runDeps(s, f, testsupport.NewFakeParser(), clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestRunSchedulesNextDueByEffectiveInterval(t *testing.T) {
 			p := testsupport.NewFakeParser()
 			p.Register(url, core.ParsedFeed{TTL: tc.ttl, Items: []core.Item{{GUID: "i1", Title: "i1"}}})
 
-			if _, _, err := Run(ctx, runDeps(s, f, p, clk), nil, false); err != nil {
+			if _, _, err := Run(ctx, runDeps(s, f, p, clk), nil, false, core.ListFilter{}); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 
@@ -310,7 +310,7 @@ func TestRunForceRepollSurfacesNothingNew(t *testing.T) {
 	p.Register(url, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "g1"}, {GUID: "g2", Title: "g2"}}})
 	d := runDeps(s, f, p, clk)
 
-	first, _, err := Run(ctx, d, nil, false)
+	first, _, err := Run(ctx, d, nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run (first): %v", err)
 	}
@@ -318,7 +318,7 @@ func TestRunForceRepollSurfacesNothingNew(t *testing.T) {
 		t.Fatalf("first poll NewItems = %d, want 2", first.NewItems)
 	}
 
-	second, _, err := Run(ctx, d, nil, true)
+	second, _, err := Run(ctx, d, nil, true, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run (second): %v", err)
 	}
@@ -345,7 +345,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		p := testsupport.NewFakeParser()
 		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
-		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -369,7 +369,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		p := testsupport.NewFakeParser()
 		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
-		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{oldURL}, false)
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), []string{oldURL}, false, core.ListFilter{})
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -389,7 +389,7 @@ func TestRunReportsPermanentRedirectRename(t *testing.T) {
 		p := testsupport.NewFakeParser()
 		p.Register(oldURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "t1"}}})
 
-		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+		result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 		if err != nil {
 			t.Fatalf("Run: %v", err)
 		}
@@ -434,7 +434,7 @@ func TestRunMidPersistFailureReturnsPartialResult(t *testing.T) {
 		MaxBackoff:       24 * time.Hour,
 	}
 
-	result, _, err := Run(context.Background(), d, nil, false)
+	result, _, err := Run(context.Background(), d, nil, false, core.ListFilter{})
 	if err == nil {
 		t.Fatal("Run: want error from mid-persist store failure, got nil")
 	}
@@ -453,7 +453,7 @@ func TestRunEarlyHardFailureReturnsZeroResult(t *testing.T) {
 	s := testsupport.NewInMemoryStore(clk)
 
 	result, _, err := Run(context.Background(), runDeps(s, testsupport.NewFakeFetcher(), testsupport.NewFakeParser(), clk),
-		[]string{"https://unknown.example/feed.xml"}, false)
+		[]string{"https://unknown.example/feed.xml"}, false, core.ListFilter{})
 	if err == nil {
 		t.Fatal("Run: want error for an unknown named feed, got nil")
 	}
@@ -481,7 +481,7 @@ func TestRunFetchedAndDedupedCounters(t *testing.T) {
 	p.Register(urlA, core.ParsedFeed{Items: []core.Item{{GUID: "a1", Title: "a1"}, {GUID: "a2", Title: "a2"}}})
 	p.Register(urlB, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "b1"}, {GUID: "b2", Title: "b2"}, {GUID: "b3", Title: "b3"}}})
 
-	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false)
+	result, _, err := Run(context.Background(), runDeps(s, f, p, clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -516,11 +516,11 @@ func TestRunFetchedAndDedupedOnSecondPoll(t *testing.T) {
 	}})
 	d := runDeps(s, f, p, clk)
 
-	if _, _, err := Run(ctx, d, nil, false); err != nil {
+	if _, _, err := Run(ctx, d, nil, false, core.ListFilter{}); err != nil {
 		t.Fatalf("Run (first): %v", err)
 	}
 
-	second, _, err := Run(ctx, d, nil, true)
+	second, _, err := Run(ctx, d, nil, true, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run (second): %v", err)
 	}
@@ -547,7 +547,7 @@ func TestRunNotModifiedContributesZeroToFetched(t *testing.T) {
 	f := testsupport.NewFakeFetcher()
 	f.Register(url, core.FetchResult{Status: 304, NotModified: true, FinalURL: url})
 
-	result, _, err := Run(context.Background(), runDeps(s, f, testsupport.NewFakeParser(), clk), nil, false)
+	result, _, err := Run(context.Background(), runDeps(s, f, testsupport.NewFakeParser(), clk), nil, false, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestRunMixedNewAndKnownItems(t *testing.T) {
 	}})
 	d := runDeps(s, f, p, clk)
 
-	if _, _, err := Run(ctx, d, nil, false); err != nil {
+	if _, _, err := Run(ctx, d, nil, false, core.ListFilter{}); err != nil {
 		t.Fatalf("Run (seed): %v", err)
 	}
 
@@ -590,7 +590,7 @@ func TestRunMixedNewAndKnownItems(t *testing.T) {
 		{GUID: "g3", Title: "g3"},
 	}})
 
-	result, _, err := Run(ctx, d, nil, true)
+	result, _, err := Run(ctx, d, nil, true, core.ListFilter{})
 	if err != nil {
 		t.Fatalf("Run (append): %v", err)
 	}
