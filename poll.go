@@ -13,12 +13,18 @@ import (
 // regardless of schedule. Force polls every active feed, ignoring the schedule.
 // Tags narrows the selection to a lane: it restricts the due feeds on their own
 // cadence, or the active feeds under Force, so a lane is pollable from a timer
-// without implying Force.
+// without implying Force. Fields projects the reported new items to a subset of
+// item fields, shrinking the envelope for scheduled callers that only need
+// titles and links; it shapes output only and never affects storage or dedup.
+//
+// As on ItemsRequest, the projectable field names are enumerated in the usage
+// text by the frontend, since a struct tag cannot compute them.
 type PollRequest struct {
-	Feeds []string `arg:"feed" variadic:"true"`
-	Force bool     `flag:"force" alias:"all" usage:"poll every active feed, ignoring the schedule"`
-	Tags  []string `flag:"tag" usage:"poll only feeds carrying this tag (repeatable); cannot be combined with named feeds"`
-	Match string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
+	Feeds  []string `arg:"feed" variadic:"true"`
+	Force  bool     `flag:"force" alias:"all" usage:"poll every active feed, ignoring the schedule"`
+	Tags   []string `flag:"tag" usage:"poll only feeds carrying this tag (repeatable); cannot be combined with named feeds"`
+	Match  string   `flag:"match" default:"all" usage:"multi-tag semantics: 'all' (default) or 'any'"`
+	Fields []string `flag:"fields" usage:"project new items to a subset of item fields; full item when omitted"`
 }
 
 // Validate reports whether the request is usable. Naming feeds and naming a lane
@@ -31,8 +37,12 @@ func (r PollRequest) Validate() error {
 }
 
 // filter resolves the request into the store filter that narrows the selection,
-// so Validate and Poll state the rules once and cannot drift.
+// so Validate and Poll state the rules once and cannot drift. It also checks
+// the projection, so an unknown field is rejected before any feed is fetched.
 func (r PollRequest) filter() (core.ListFilter, error) {
+	if err := validateItemFields(r.Fields); err != nil {
+		return core.ListFilter{}, err
+	}
 	if len(r.Tags) > 0 && len(r.Feeds) > 0 {
 		return core.ListFilter{}, usageErr("--tag cannot be combined with named feeds; " +
 			"name feeds to poll exactly those, or use --tag to poll a lane")
@@ -79,6 +89,68 @@ func (r PollResult) MarshalJSON() ([]byte, error) {
 	a := alias(r)
 	if a.Items == nil {
 		a.Items = []core.Item{}
+	}
+	if a.Failures == nil {
+		a.Failures = []PollFailure{}
+	}
+	if a.Renamed == nil {
+		a.Renamed = []core.FeedRename{}
+	}
+	return json.Marshal(a)
+}
+
+// Envelope selects the shape the request asked for: the projected envelope when
+// Fields is set, otherwise the full one, mirroring ItemsRequest.Envelope.
+func (r PollRequest) Envelope(res PollResult) any {
+	if len(r.Fields) == 0 {
+		return res
+	}
+	return res.Project(r.Fields)
+}
+
+// Project narrows the reported items to the requested fields, leaving every
+// count, failure, and rename untouched. The always-on feed_url identity field is
+// emitted regardless of whether it was requested.
+func (r PollResult) Project(fields []string) ProjectedPollResult {
+	return ProjectedPollResult{
+		Head:      r.Head,
+		Polled:    r.Polled,
+		Succeeded: r.Succeeded,
+		Failed:    r.Failed,
+		Skipped:   r.Skipped,
+		Fetched:   r.Fetched,
+		NewItems:  r.NewItems,
+		Deduped:   r.Deduped,
+		Items:     projectItems(r.Items, fields),
+		Failures:  r.Failures,
+		Renamed:   r.Renamed,
+	}
+}
+
+// ProjectedPollResult is the poll result envelope when a projection narrows the
+// reported items to a subset of fields. Each item is a map of feed_url plus the
+// requested fields; every other key matches PollResult.
+type ProjectedPollResult struct {
+	Head
+	Polled    int               `json:"polled"`
+	Succeeded int               `json:"succeeded"`
+	Failed    int               `json:"failed"`
+	Skipped   int               `json:"skipped"`
+	Fetched   int               `json:"fetched"`
+	NewItems  int               `json:"new_items"`
+	Deduped   int               `json:"deduped"`
+	Items     []map[string]any  `json:"items" jsonschema:"opaque"`
+	Failures  []PollFailure     `json:"failures"`
+	Renamed   []core.FeedRename `json:"renamed"`
+}
+
+// MarshalJSON coalesces the owned collections so items, failures, and renamed
+// always serialize as [] rather than null.
+func (r ProjectedPollResult) MarshalJSON() ([]byte, error) {
+	type alias ProjectedPollResult
+	a := alias(r)
+	if a.Items == nil {
+		a.Items = []map[string]any{}
 	}
 	if a.Failures == nil {
 		a.Failures = []PollFailure{}

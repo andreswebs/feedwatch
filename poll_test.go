@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -457,5 +458,73 @@ func TestPollWithoutTagsIsUnchanged(t *testing.T) {
 	}
 	if res.Polled != 2 || res.Skipped != 1 {
 		t.Errorf("polled/skipped = %d/%d, want 2/1 across the whole store", res.Polled, res.Skipped)
+	}
+}
+
+// TestPollEnvelopeProjectsOnlyTheItems covers that Envelope selects the
+// projected shape when Fields is set, narrowing each item to feed_url plus the
+// requested fields while every count, failure, and rename carries over.
+func TestPollEnvelopeProjectsOnlyTheItems(t *testing.T) {
+	app, _, _ := newPollApp(t, nil, nil,
+		pollFeed{url: "https://a.example/feed.xml", items: []core.Item{wireItem("i1", "One"), wireItem("i2", "Two")}},
+		pollFeed{url: "https://b.example/feed.xml", fetchErr: errors.New("connection refused")},
+	)
+
+	req := feedwatch.PollRequest{Fields: []string{"title", "link"}}
+	res, err := app.Poll(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Poll = %v, want nil", err)
+	}
+
+	if _, ok := (feedwatch.PollRequest{}).Envelope(res).(feedwatch.PollResult); !ok {
+		t.Errorf("Envelope with no fields returned %T, want feedwatch.PollResult", feedwatch.PollRequest{}.Envelope(res))
+	}
+	projected, ok := req.Envelope(res).(feedwatch.ProjectedPollResult)
+	if !ok {
+		t.Fatalf("Envelope with fields returned %T, want feedwatch.ProjectedPollResult", req.Envelope(res))
+	}
+
+	if projected.Polled != res.Polled || projected.Succeeded != res.Succeeded || projected.Failed != res.Failed ||
+		projected.Skipped != res.Skipped || projected.Fetched != res.Fetched ||
+		projected.NewItems != res.NewItems || projected.Deduped != res.Deduped {
+		t.Errorf("projected counts = %+v, want the full result's counts %+v", projected, res)
+	}
+	if len(projected.Failures) != 1 || projected.Failures[0] != res.Failures[0] {
+		t.Errorf("projected failures = %+v, want %+v", projected.Failures, res.Failures)
+	}
+	if len(projected.Items) != 2 {
+		t.Fatalf("projected %d item(s), want 2", len(projected.Items))
+	}
+	for _, row := range projected.Items {
+		if len(row) != 3 || row["feed_url"] == nil || row["title"] == nil || row["link"] == nil {
+			t.Errorf("row = %v, want exactly feed_url, title, and link", row)
+		}
+	}
+}
+
+// TestPollRejectsUnknownFieldBeforeFetching covers that an unknown projection
+// field is a usage error from both Validate and Poll, raised before any feed is
+// fetched.
+func TestPollRejectsUnknownFieldBeforeFetching(t *testing.T) {
+	const url = "https://a.example/feed.xml"
+	app, _, fetcher := newPollApp(t, nil, nil, pollFeed{url: url, items: []core.Item{wireItem("i1", "One")}})
+	req := feedwatch.PollRequest{Fields: []string{"titel"}}
+
+	if err := req.Validate(); err == nil || !strings.Contains(err.Error(), `did you mean "title"`) {
+		t.Errorf("Validate = %v, want an unknown-field usage error suggesting title", err)
+	}
+	res, err := app.Poll(context.Background(), req)
+	if err == nil {
+		t.Fatalf("Poll = nil error, want an unknown-field usage error")
+	}
+	var fe *core.FeedError
+	if !errors.As(err, &fe) || fe.Category != core.CatUsage {
+		t.Errorf("Poll error = %v, want a usage-category FeedError", err)
+	}
+	if res.Polled != 0 {
+		t.Errorf("polled = %d, want 0", res.Polled)
+	}
+	if n := len(fetcher.Requests(url)); n != 0 {
+		t.Errorf("feed was fetched %d time(s), want 0 on a rejected poll", n)
 	}
 }

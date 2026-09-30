@@ -2,10 +2,12 @@ package command
 
 import (
 	"context"
+	"strings"
 
 	cliv3 "github.com/urfave/cli/v3"
 
 	"github.com/andreswebs/feedwatch"
+	"github.com/andreswebs/feedwatch/core"
 )
 
 // pollCommand registers the poll subcommand: fetch the due feeds (or the named
@@ -17,7 +19,7 @@ func (d Deps) pollCommand() *cliv3.Command {
 		Usage:     "poll due feeds (or the named feeds) and report new items",
 		ArgsUsage: "[FEED...]",
 		Arguments: argsFor(feedwatch.PollRequest{}),
-		Flags:     flagsFor(feedwatch.PollRequest{}),
+		Flags:     pollFlags(),
 		Action:    d.pollAction,
 	}
 }
@@ -49,12 +51,12 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 		// reported, so the partial envelope is written before the error
 		// propagates. An early hard failure leaves stdout empty.
 		if res.Polled > 0 {
-			_ = r.Result(res)
+			_ = r.Result(req.Envelope(res))
 		}
 		return err
 	}
 
-	if err := r.Result(res); err != nil {
+	if err := r.Result(req.Envelope(res)); err != nil {
 		return err
 	}
 
@@ -67,4 +69,11 @@ func (d Deps) pollAction(ctx context.Context, cmd *cliv3.Command) error {
 		return exitError{code: code}
 	}
 	return nil
+}
+
+// pollFlags projects the poll request shape, then supplies the --fields usage
+// string that enumerates the projectable field names, as itemsFlags does.
+func pollFlags() []cliv3.Flag {
+	return withUsage(flagsFor(feedwatch.PollRequest{}), "fields",
+		"project new items to a subset of item fields ("+strings.Join(core.ItemFieldNames(), ", ")+"); full item when omitted")
 }

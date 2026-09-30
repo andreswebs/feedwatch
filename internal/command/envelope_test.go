@@ -19,6 +19,7 @@ var envelopeCases = []struct {
 	{"feedwatch.MigrateStatus", feedwatch.MigrateStatus{}, nil},
 	{"feedwatch.MigrateApplied", feedwatch.MigrateApplied{}, nil},
 	{"feedwatch.PollResult", feedwatch.PollResult{}, []string{"items", "failures", "renamed"}},
+	{"feedwatch.ProjectedPollResult", feedwatch.ProjectedPollResult{}, []string{"items", "failures", "renamed"}},
 	{"feedwatch.CheckResult", feedwatch.CheckResult{}, []string{"failures"}},
 	{"feedwatch.AddResult", feedwatch.AddResult{}, nil},
 	{"feedwatch.ListResult", feedwatch.ListResult{}, []string{"feeds"}},

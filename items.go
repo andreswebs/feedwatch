@@ -56,13 +56,8 @@ func (r ItemsRequest) Validate() error {
 // query resolves the request into a core.ItemQuery, interpreting relative time
 // bounds against now.
 func (r ItemsRequest) query(now time.Time) (core.ItemQuery, error) {
-	for _, f := range r.Fields {
-		if f == "feed_url" { // always-on identity field: naming it is a no-op
-			continue
-		}
-		if !core.ValidItemFields[f] {
-			return core.ItemQuery{}, usageErr(unknownFieldMessage(f))
-		}
+	if err := validateItemFields(r.Fields); err != nil {
+		return core.ItemQuery{}, err
 	}
 
 	filter, err := tagFilter(r.Tags, r.Match)
@@ -113,6 +108,20 @@ func (r ItemsRequest) query(now time.Time) (core.ItemQuery, error) {
 	return q, nil
 }
 
+// validateItemFields rejects a projection naming an unknown item field. It is
+// shared by every command that projects items, so they accept the same names.
+func validateItemFields(fields []string) error {
+	for _, f := range fields {
+		if f == "feed_url" { // always-on identity field: naming it is a no-op
+			continue
+		}
+		if !core.ValidItemFields[f] {
+			return usageErr(unknownFieldMessage(f))
+		}
+	}
+	return nil
+}
+
 // Envelope selects the shape the request asked for: the projected envelope when
 // Fields is set, otherwise the full one. It is the single place that choice is
 // expressed, so no frontend inspects Fields itself.
@@ -147,16 +156,21 @@ func (r ItemsResult) MarshalJSON() ([]byte, error) {
 // projection of the items use case. The always-on feed_url identity field is
 // emitted regardless of whether it was requested.
 func (r ItemsResult) Project(fields []string) ProjectedItemsResult {
-	projected := make([]map[string]any, len(r.Items))
-	for i, it := range r.Items {
-		projected[i] = core.ProjectItem(it, fields)
-	}
 	return ProjectedItemsResult{
 		Head:          r.Head,
-		Items:         projected,
+		Items:         projectItems(r.Items, fields),
 		OmittedNoDate: r.OmittedNoDate,
 		fields:        fields,
 	}
+}
+
+// projectItems narrows each item to the requested fields plus feed_url.
+func projectItems(items []core.Item, fields []string) []map[string]any {
+	projected := make([]map[string]any, len(items))
+	for i, it := range items {
+		projected[i] = core.ProjectItem(it, fields)
+	}
+	return projected
 }
 
 // ProjectedItemsResult is the items result envelope when a projection narrows

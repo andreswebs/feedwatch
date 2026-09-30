@@ -3316,3 +3316,17 @@ whitespace, so `--add "  ZED "` exits 64 while `--add ZED` stores `zed`. The two
 functions serve different callers (validation guards the request, canonicalization
 normalizes what is already valid), and the stricter surface is the documented
 one.
+
+## fee-5ggw: poll --fields projection
+
+- `poll --fields` is opt-in; the full item stays the default. A summary-only
+  default would have silently reshaped the envelope for every existing consumer,
+  daemon and library embedders included.
+- Projection validation lives in one helper, `validateItemFields`, shared by
+  `ItemsRequest.query` and `PollRequest.filter`. Putting it in `filter` means
+  `Validate` and `Poll` both reject an unknown field before any fetch.
+- `schema poll` still reflects only the full `PollResult`, the same as `items`:
+  no item property is `required`, so a projected row (`feed_url` plus a subset)
+  already conforms, and a `oneOf` would add nothing a consumer can use.
+- The CLI renders `req.Envelope(res)` on both the success path and the
+  mid-persist partial path, so a partial envelope is projected too.

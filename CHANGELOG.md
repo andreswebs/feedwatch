@@ -91,6 +91,16 @@ releases.
 
 ### Added
 
+- **`poll --fields` projects the reported new items to a subset of item
+  fields**, with the same names and validation as `items --fields`. A scheduled
+  poll's envelope carries the full `content_html` and `content_text` of every
+  new item, which made cron output large (one daily run emitted about 1.1 MB);
+  `poll --fields title,link,summary` keeps the counts, `failures`, and `renamed`
+  and narrows only `items`. The default is unchanged, and projection affects
+  output only: new items are still stored in full. Library callers get
+  `PollRequest.Fields`, `PollRequest.Envelope`, `PollResult.Project`, and the
+  `ProjectedPollResult` envelope.
+
 - **Feeds can be tagged, and every selecting command can be narrowed to a
   tagged lane.** A lane is a set of feeds sharing a tag, so an agent can poll,
   query, prune, export, or unsubscribe one interest group without splitting

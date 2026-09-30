@@ -320,6 +320,14 @@ Options:
   `--force` it narrows the forced selection to that lane's active feeds. It
   cannot be combined with named feeds (exit 64).
 - `--match <all|any>` - multi-tag semantics; `all` by default.
+- `--fields <list>` - project the reported new items to a subset of item fields
+  (repeatable or comma-separated), with the same names and rules as `items
+  --fields`. Every other envelope key (the counts, `failures`, and `renamed`) is
+  unchanged. Projection shapes output only: every new item is still stored and
+  marked seen in full, so a later `items` query can read its content. An unknown
+  field name is a usage error (exit 64) raised before any feed is fetched. Use
+  it to keep scheduled runs small, since full items carry `content_html` and
+  `content_text`.
 
 A hard failure while persisting a fetched feed (a store write error) aborts the
 run and exits with a failure code (70, an internal error, for the unclassified
@@ -340,6 +348,10 @@ feedwatch poll --tag ai                       # immediately again: nothing due
 # {"schema_version":1,"ok":true,"polled":0,"succeeded":0,"failed":0,"skipped":1,"fetched":0,"new_items":0,"deduped":0,"items":[],"failures":[],"renamed":[]}
 feedwatch poll --force --tag ai,security --match any
 # {"schema_version":1,"ok":true,"polled":2,"succeeded":2,"failed":0,"skipped":0,"fetched":2,"new_items":2,"deduped":0,"items":[...],"failures":[],"renamed":[]}
+feedwatch poll --fields title,link             # titles and links only
+# {"schema_version":1,"ok":true,"polled":1,"succeeded":1,"failed":0,"skipped":0,"fetched":3,"new_items":3,"deduped":0,
+#   "items":[{"feed_url":"http://127.0.0.1:8099/feeds/rss20.xml","title":"First post","link":"http://example.com/posts/1"},...],
+#   "failures":[],"renamed":[]}
 ```
 
 `skipped` counts feeds that were in the selection but not due, so under `--tag`

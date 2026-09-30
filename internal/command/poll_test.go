@@ -613,3 +613,93 @@ func TestPollRejectsInvalidTagSelection(t *testing.T) {
 		})
 	}
 }
+
+// TestPollFieldsProjectsItems covers --fields on poll: each reported item
+// carries only feed_url plus the requested fields, and the counts are unchanged.
+func TestPollFieldsProjectsItems(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	const url = "https://a.example/feed.xml"
+	seedDueFeed(t, st, url)
+	fetcher.Register(url, okResult())
+	parser.Register(url, core.ParsedFeed{Items: []core.Item{{
+		GUID: "a1", Title: "Item A", Link: "https://a.example/1",
+		ContentHTML: "<p>long body</p>", ContentText: "long body",
+	}}})
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll", "--fields", "title,link")
+
+	if res.code != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr: %s", res.code, res.err)
+	}
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if env.Polled != 1 || env.NewItems != 1 || len(env.Items) != 1 {
+		t.Fatalf("polled = %d, new_items = %d, items = %d, want 1, 1, 1", env.Polled, env.NewItems, len(env.Items))
+	}
+	want := map[string]any{"feed_url": url, "title": "Item A", "link": "https://a.example/1"}
+	if len(env.Items[0]) != len(want) {
+		t.Errorf("item = %v, want exactly %v", env.Items[0], want)
+	}
+	for k, v := range want {
+		if env.Items[0][k] != v {
+			t.Errorf("item[%q] = %v, want %v", k, env.Items[0][k], v)
+		}
+	}
+	if !pollEnvelopeHasField(t, res.out, "failures", "[]") || !pollEnvelopeHasField(t, res.out, "renamed", "[]") {
+		t.Errorf("failures and renamed must serialize as [] under projection, got %q", res.out)
+	}
+}
+
+// TestPollFieldsUnknownRejected covers that an unknown --fields name is a usage
+// error (exit 64, empty stdout) raised before any feed is fetched.
+func TestPollFieldsUnknownRejected(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	const url = "https://a.example/feed.xml"
+	seedDueFeed(t, st, url)
+	fetcher.Register(url, okResult())
+
+	res := runPoll(t, st, fetcher, parser, clk, "poll", "--fields", "title,bogus")
+
+	if res.code != 64 {
+		t.Errorf("exit code = %d, want 64 (usage)", res.code)
+	}
+	if res.out != "" {
+		t.Errorf("stdout = %q, want empty on a usage error", res.out)
+	}
+	if n := len(fetcher.Requests(url)); n != 0 {
+		t.Errorf("feed was fetched %d time(s), want 0 on a rejected poll", n)
+	}
+}
+
+// TestPollFieldsProjectsPartialEnvelope covers that a mid-persist failure still
+// renders the partial envelope in the projected shape.
+func TestPollFieldsProjectsPartialEnvelope(t *testing.T) {
+	st, fetcher, parser, clk := newPollDoubles(t)
+
+	const goodURL = "https://aaa-good.example/feed.xml"
+	const badURL = "https://zzz-bad.example/feed.xml"
+	seedDueFeed(t, st, goodURL)
+	seedDueFeed(t, st, badURL)
+	fetcher.Register(goodURL, okResult())
+	fetcher.Register(badURL, okResult())
+	parser.Register(goodURL, core.ParsedFeed{Items: []core.Item{{GUID: "g1", Title: "Good Item", Link: "https://aaa-good.example/1", ContentText: "body"}}})
+	parser.Register(badURL, core.ParsedFeed{Items: []core.Item{{GUID: "b1", Title: "Bad Item"}}})
+
+	failing := &testsupport.FailingUpsertStore{Store: st, FailURL: badURL}
+	res := runPoll(t, failing, fetcher, parser, clk, "poll", "--fields", "title")
+
+	if res.code != 70 {
+		t.Errorf("exit code = %d, want 70", res.code)
+	}
+	var env pollEnvelope
+	if err := json.Unmarshal([]byte(res.out), &env); err != nil {
+		t.Fatalf("stdout is not a poll envelope: %v\ngot: %q", err, res.out)
+	}
+	if len(env.Items) != 1 || len(env.Items[0]) != 2 || env.Items[0]["title"] != "Good Item" {
+		t.Errorf("items = %v, want one row of feed_url and title", env.Items)
+	}
+}

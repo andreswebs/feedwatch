@@ -80,7 +80,7 @@ result and an error.
 | Subscribe to a validated feed  | `Add`               | `AddRequest`       | `AddResult`                             |
 | Unsubscribe, cascading items   | `Remove`            | `RemoveRequest`    | `RmResult`                              |
 | List subscriptions and status  | `List`              | `ListRequest`      | `ListResult`                            |
-| Poll due (or named) feeds      | `Poll`              | `PollRequest`      | `PollResult`                            |
+| Poll due (or named) feeds      | `Poll`              | `PollRequest`      | `PollResult`/`ProjectedPollResult`      |
 | Query stored item history      | `Items`             | `ItemsRequest`     | `ItemsResult`/`ProjectedItemsResult`    |
 | Trim stored history            | `Prune`             | `PruneRequest`     | `PruneResult`                           |
 | Probe feeds without writing    | `Check`             | `CheckRequest`     | `CheckResult`                           |
@@ -163,6 +163,11 @@ concrete. When a caller asked for a projection, `ItemsRequest.Envelope` selects
 the narrowed shape; it is the single place that choice is made, so no frontend
 inspects `Fields` itself. Reading `res.Items` directly and ignoring `Envelope` is
 equally valid for a program that does not serialize the result.
+
+`Poll` follows the same pattern: it always returns the full `PollResult`, and
+`PollRequest.Envelope` returns a `ProjectedPollResult` when `PollRequest.Fields`
+is set. Only `items` is narrowed; the counts, `Failures`, and `Renamed` carry
+over unchanged, and every new item is still stored in full.
 
 The filter axis and the sort axis are independent: `TimeField` chooses which time
 the `Since`/`Until` window matches, `Order` chooses which time the results are

@@ -333,7 +333,7 @@ func requestSurfaceCases() []requestSurfaceCase {
 		{"import", feedwatch.ImportRequest{}, 0, 0},
 		{"items", feedwatch.ItemsRequest{}, 11, 0},
 		{"list", feedwatch.ListRequest{}, 2, 0},
-		{"poll", feedwatch.PollRequest{}, 3, 1},
+		{"poll", feedwatch.PollRequest{}, 4, 1},
 		{"prune", feedwatch.PruneRequest{}, 4, 0},
 		{"rm", feedwatch.RemoveRequest{}, 2, 1},
 		{"tag", feedwatch.TagRequest{}, 4, 1},
